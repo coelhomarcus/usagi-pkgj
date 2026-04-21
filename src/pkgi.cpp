@@ -40,6 +40,7 @@ extern SDL_Texture* sim_create_font_texture(const uint32_t* px, int w, int h);
 
 #include <memory>
 #include <set>
+#include <cctype>
 
 #ifndef PKGI_SIMULATOR
 #include <psp2common/npdrm.h>
@@ -216,6 +217,160 @@ std::string const& pkgi_get_url_from_mode(Mode mode)
     }
     throw std::runtime_error(
             fmt::format("unknown mode: {}", static_cast<int>(mode)));
+}
+
+static const int PKGI_GROUP_COUNT = 29;
+
+static bool pkgi_utf8_next_codepoint(
+        const std::string& text,
+        size_t& pos,
+        uint32_t& codepoint)
+{
+    if (pos >= text.size())
+        return false;
+
+    const unsigned char c = static_cast<unsigned char>(text[pos]);
+    if (c < 0x80)
+    {
+        codepoint = c;
+        pos += 1;
+        return true;
+    }
+    if ((c & 0xE0) == 0xC0 && pos + 1 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        codepoint = ((c & 0x1F) << 6) | (c1 & 0x3F);
+        pos += 2;
+        return true;
+    }
+    if ((c & 0xF0) == 0xE0 && pos + 2 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        const unsigned char c2 = static_cast<unsigned char>(text[pos + 2]);
+        codepoint = ((c & 0x0F) << 12) | ((c1 & 0x3F) << 6) |
+                    (c2 & 0x3F);
+        pos += 3;
+        return true;
+    }
+    if ((c & 0xF8) == 0xF0 && pos + 3 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        const unsigned char c2 = static_cast<unsigned char>(text[pos + 2]);
+        const unsigned char c3 = static_cast<unsigned char>(text[pos + 3]);
+        codepoint = ((c & 0x07) << 18) | ((c1 & 0x3F) << 12) |
+                    ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+        pos += 4;
+        return true;
+    }
+
+    // Invalid UTF-8 sequence, skip one byte.
+    pos += 1;
+    return false;
+}
+
+static bool pkgi_is_other_script(uint32_t c)
+{
+    // CJK and East Asian blocks.
+    if ((0x3040 <= c && c <= 0x30FF) ||  // Hiragana/Katakana
+        (0x31F0 <= c && c <= 0x31FF) ||  // Katakana Phonetic Extensions
+        (0x3400 <= c && c <= 0x4DBF) ||  // CJK Extension A
+        (0x4E00 <= c && c <= 0x9FFF) ||  // CJK Unified Ideographs
+        (0xF900 <= c && c <= 0xFAFF) ||  // CJK Compatibility Ideographs
+        (0xAC00 <= c && c <= 0xD7AF) ||  // Hangul Syllables
+        (0x1100 <= c && c <= 0x11FF) ||  // Hangul Jamo
+        (0x3130 <= c && c <= 0x318F) ||  // Hangul Compatibility Jamo
+        (0x20000 <= c && c <= 0x2FA1F) || // Additional CJK
+        (0x3000 <= c && c <= 0x303F))    // CJK Symbols and Punctuation
+        return true;
+    return false;
+}
+
+static int pkgi_name_group(const std::string& name)
+{
+    size_t i = 0;
+    while (i < name.size() && std::isspace(static_cast<unsigned char>(name[i])))
+        ++i;
+
+    while (i < name.size())
+    {
+        uint32_t cp;
+        if (!pkgi_utf8_next_codepoint(name, i, cp))
+            continue;
+
+        if (cp < 0x80)
+        {
+            if (cp >= '0' && cp <= '9')
+                return 0;
+            if (cp == '@')
+                return 1;
+            if (cp >= 'A' && cp <= 'Z')
+                return static_cast<int>(cp - 'A') + 2;
+            if (cp >= 'a' && cp <= 'z')
+                return static_cast<int>(cp - 'a') + 2;
+            if (std::ispunct(static_cast<unsigned char>(cp)))
+                return 1;
+            if (std::isspace(static_cast<unsigned char>(cp)))
+                continue;
+            return 28;
+        }
+
+        if (pkgi_is_other_script(cp))
+            return 28;
+
+        // Non-ASCII non-CJK characters are treated as Other.
+        return 28;
+    }
+
+    return 28;
+}
+
+static const char* pkgi_group_label(int group)
+{
+    if (group == 0)
+        return "0-9";
+    if (group == 1)
+        return "@";
+    if (group >= 2 && group <= 27)
+    {
+        static char text[2] = "A";
+        text[0] = static_cast<char>('A' + group - 2);
+        return text;
+    }
+    return "Other";
+}
+
+static int pkgi_next_group(int current, const bool present[PKGI_GROUP_COUNT], bool forward)
+{
+    if (current < 0 || current >= PKGI_GROUP_COUNT)
+        current = 0;
+
+    for (int step = 1; step < PKGI_GROUP_COUNT; ++step)
+    {
+        int idx = forward
+                ? (current + step) % PKGI_GROUP_COUNT
+                : (current + PKGI_GROUP_COUNT - step) % PKGI_GROUP_COUNT;
+        if (present[idx])
+            return idx;
+    }
+    return current;
+}
+
+static uint32_t pkgi_first_item_with_group(int group)
+{
+    const uint32_t db_count = db ? db->count() : 0;
+    for (uint32_t i = 0; i < db_count; ++i)
+        if (pkgi_name_group(db->get(i)->name) == group)
+            return i;
+    return 0;
+}
+
+static std::string pkgi_group_overlay_text;
+static uint32_t pkgi_group_overlay_until = 0;
+
+static void pkgi_set_group_overlay(int group)
+{
+    pkgi_group_overlay_text = pkgi_group_label(group);
+    pkgi_group_overlay_until = pkgi_time_msec() + 2000;
 }
 
 void pkgi_refresh_thread(void)
@@ -477,6 +632,35 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
             }
         }
 
+        if (input->pressed & PKGI_BUTTON_LT)
+        {
+            if (db_count != 0)
+            {
+                if (selected_item >= db_count)
+                    selected_item = 0;
+
+                bool present[PKGI_GROUP_COUNT] = {};
+                for (uint32_t i = 0; i < db_count; ++i)
+                    present[pkgi_name_group(db->get(i)->name)] = true;
+
+                int current_group = pkgi_name_group(db->get(selected_item)->name);
+                int group = pkgi_next_group(current_group, present, false);
+                if (group != current_group || !present[current_group])
+                {
+                    selected_item = pkgi_first_item_with_group(group);
+                    uint32_t max_items =
+                            avail_height / (font_height + PKGI_MAIN_ROW_PADDING) - 1;
+                    if (selected_item < first_item)
+                        first_item = selected_item;
+                    else if (selected_item > first_item + max_items)
+                        first_item = selected_item > max_items
+                                         ? selected_item - max_items
+                                         : 0;
+                    pkgi_set_group_overlay(group);
+                }
+            }
+        }
+
         if (input->active & PKGI_BUTTON_RIGHT)
         {
             uint32_t max_items =
@@ -488,6 +672,35 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
                 if (selected_item >= db_count)
                 {
                     selected_item = db_count - 1;
+                }
+            }
+        }
+
+        if (input->pressed & PKGI_BUTTON_RT)
+        {
+            if (db_count != 0)
+            {
+                if (selected_item >= db_count)
+                    selected_item = 0;
+
+                bool present[PKGI_GROUP_COUNT] = {};
+                for (uint32_t i = 0; i < db_count; ++i)
+                    present[pkgi_name_group(db->get(i)->name)] = true;
+
+                int current_group = pkgi_name_group(db->get(selected_item)->name);
+                int group = pkgi_next_group(current_group, present, true);
+                if (group != current_group || !present[current_group])
+                {
+                    selected_item = pkgi_first_item_with_group(group);
+                    uint32_t max_items =
+                            avail_height / (font_height + PKGI_MAIN_ROW_PADDING) - 1;
+                    if (selected_item < first_item)
+                        first_item = selected_item;
+                    else if (selected_item > first_item + max_items)
+                        first_item = selected_item > max_items
+                                         ? selected_item - max_items
+                                         : 0;
+                    pkgi_set_group_overlay(group);
                 }
             }
         }
@@ -706,6 +919,22 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
                     height,
                     PKGI_COLOR_SCROLL_BAR);
         }
+    }
+
+    if (!pkgi_group_overlay_text.empty() &&
+            pkgi_time_msec() < pkgi_group_overlay_until)
+    {
+        const float scale = 4.0f;
+        int w = static_cast<int>(pkgi_text_width(pkgi_group_overlay_text.c_str()) * scale);
+        int h = static_cast<int>(pkgi_text_height("M") * scale);
+        int text_top = (VITA_HEIGHT - h) / 2;
+        int x = (VITA_WIDTH - w) / 2;
+        int y = text_top - 20;
+        if (y < 0)
+            y = 0;
+        pkgi_draw_rect(x - 12, text_top - 12, w + 24, h + 24, PKGI_COLOR_MENU_BACKGROUND);
+        pkgi_draw_text_scale(
+                x, y, PKGI_COLOR_TEXT_HEAD, pkgi_group_overlay_text.c_str(), scale);
     }
 
     if (input && (input->pressed & pkgi_ok_button()))

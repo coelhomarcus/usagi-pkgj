@@ -394,6 +394,11 @@ void pkgi_draw_rect(int x, int y, int w, int h, uint32_t color)
 
 void pkgi_draw_text(int x, int y, uint32_t color, const char* text)
 {
+    pkgi_draw_text_scale(x, y, color, text, 1.f);
+}
+
+void pkgi_draw_text_scale(int x, int y, uint32_t color, const char* text, float scale)
+{
     if (!g_font || !text || !*text)
         return;
 
@@ -414,7 +419,11 @@ void pkgi_draw_text(int x, int y, uint32_t color, const char* text)
     SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
 
     // vita.cpp draws at y+20 (font ascent offset) — replicate here
-    SDL_Rect dst{x, y + 2, tw, th};
+    SDL_Rect dst{
+            x,
+            y + 2,
+            static_cast<int>(tw * scale),
+            static_cast<int>(th * scale)};
     SDL_RenderCopy(g_sdl_renderer, tex, nullptr, &dst);
     SDL_DestroyTexture(tex);
 }
