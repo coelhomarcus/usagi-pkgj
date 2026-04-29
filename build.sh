@@ -2,7 +2,7 @@
 # build.sh — convenience build script for pkgj fork
 #
 # Usage:
-#   ./build.sh [target] [--clean]
+#   ./build.sh [target] [--clean] [--fake-version VERSION]
 #
 # Targets:
 #   host          Build host simulator   (output: ci/buildhost/pkgj_cli)
@@ -14,7 +14,12 @@
 #                   (Safe to install alongside the release build on the same Vita)
 #
 # Options:
-#   --clean   Remove the build directory before building (full rebuild)
+#   --clean              Remove the build directory before building (full rebuild)
+#   --fake-version VER   Override PKGI_VERSION with VER so the running app thinks it
+#                        is an older version and triggers the auto-update check.
+#                        Example: ./build.sh vita --fake-version 0.59
+#                        (install that VPK on the Vita, open PKGj+ → it should offer
+#                         to download the real latest release from GitHub)
 
 set -euo pipefail
 
@@ -23,18 +28,36 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGET="vita"
 CLEAN=0
+FAKE_VERSION=""
 
-for arg in "$@"; do
-    case "$arg" in
-        host|vita|vita-release|vita-test) TARGET="$arg" ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        host|vita|vita-release|vita-test) TARGET="$1" ;;
         --clean) CLEAN=1 ;;
+        --fake-version)
+            shift
+            FAKE_VERSION="${1:-}"
+            if [[ -z "$FAKE_VERSION" ]]; then
+                echo "--fake-version requires a version argument (e.g. 0.59)"
+                exit 1
+            fi
+            ;;
         *)
-            echo "Unknown argument: $arg"
-            echo "Usage: $0 [host|vita|vita-release|vita-test] [--clean]"
+            echo "Unknown argument: $1"
+            echo "Usage: $0 [host|vita|vita-release|vita-test] [--clean] [--fake-version VERSION]"
             exit 1
             ;;
     esac
+    shift
 done
+
+# Build the CMake -D flag for the fake version (empty string = use real version)
+VERSION_OVERRIDE=""
+if [[ -n "$FAKE_VERSION" ]]; then
+    # Override both the runtime version (PKGI_VERSION) and the param.sfo version (LiveArea)
+    VERSION_OVERRIDE="-DPKGI_DISPLAY_VERSION=${FAKE_VERSION} -DVITA_VERSION=${FAKE_VERSION}"
+    echo "==> Fake version mode: PKGI_VERSION + param.sfo APP_VER will be \"${FAKE_VERSION}\" (for update testing)"
+fi
 
 [[ "$TARGET" == "vita-release" ]] && TARGET="vita"
 
@@ -98,16 +121,33 @@ case "$TARGET" in
             --build missing \
             --output-folder .
 
-        poetry run conan build ../.. \
-            -s build_type=RelWithDebInfo \
-            --profile:host vita \
-            --output-folder .
+        if [[ -n "$FAKE_VERSION" ]]; then
+            # cmake directly so we can pass the version override at configure time
+            export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+            export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH:-}"
+            [[ -f conanbuildenv-relwithdebinfo-armv7.sh ]] && \
+                source conanbuildenv-relwithdebinfo-armv7.sh
+
+            cmake ../.. \
+                -G Ninja \
+                -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
+                -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                ${VERSION_OVERRIDE}
+
+            cmake --build .
+        else
+            poetry run conan build ../.. \
+                -s build_type=RelWithDebInfo \
+                --profile:host vita \
+                --output-folder .
+        fi
 
         # Keep ELF with debug symbols alongside the stripped eboot
         [[ -f pkgj ]] && cp pkgj pkgj.elf
 
         echo ""
         echo "==> Done.  Package: ci/build/pkgj.vpk"
+        [[ -n "$FAKE_VERSION" ]] && echo "    Built with fake version \"${FAKE_VERSION}\" — auto-update test build."
         ;;
 
     # ------------------------------------------------------------------
@@ -141,7 +181,8 @@ case "$TARGET" in
             -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DVITA_TITLEID="PKGJ00099" \
-            -DVITA_APP_NAME="PKGj+ TEST"
+            -DVITA_APP_NAME="PKGj+ TEST" \
+            ${VERSION_OVERRIDE:-}
 
         # Step 3: cmake build
         cmake --build .
@@ -151,5 +192,6 @@ case "$TARGET" in
         echo ""
         echo "==> Done.  Package: ci/buildtest/pkgj.vpk"
         echo "    Title ID PKGJ00099 — safe to install alongside the release build."
+        [[ -n "$FAKE_VERSION" ]] && echo "    Built with fake version \"${FAKE_VERSION}\" — auto-update test build."
         ;;
 esac
