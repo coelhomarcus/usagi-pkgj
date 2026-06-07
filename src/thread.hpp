@@ -2,12 +2,110 @@
 
 #include "pkgi.hpp"
 
+#ifndef PKGI_SIMULATOR
 #include <psp2/kernel/threadmgr.h>
+#endif // PKGI_SIMULATOR
 
 #include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
+
+#ifdef PKGI_SIMULATOR
+// ──────────────────────────────────────────────────────────────────────────────
+// Linux / simulator implementations using std::mutex + std::thread
+// ──────────────────────────────────────────────────────────────────────────────
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
+class ScopeProcessLock
+{
+public:
+    ScopeProcessLock(const ScopeProcessLock&) = delete;
+    ScopeProcessLock(ScopeProcessLock&&) = delete;
+    ScopeProcessLock& operator=(const ScopeProcessLock&) = delete;
+    ScopeProcessLock& operator=(ScopeProcessLock&&) = delete;
+
+    ScopeProcessLock()  { pkgi_lock_process(); }
+    ~ScopeProcessLock() { pkgi_unlock_process(); }
+};
+
+class Mutex
+{
+public:
+    Mutex(const Mutex&) = delete;
+    Mutex(Mutex&&) = delete;
+    Mutex& operator=(const Mutex&) = delete;
+    Mutex& operator=(Mutex&&) = delete;
+
+    explicit Mutex(const std::string& /*name*/) {}
+
+    void lock()     { _m.lock(); }
+    bool try_lock() { return _m.try_lock(); }
+    void unlock()   { _m.unlock(); }
+
+private:
+    std::mutex _m;
+    friend class Cond;
+};
+
+class Cond
+{
+public:
+    Cond(const Cond&) = delete;
+    Cond(Cond&&) = delete;
+    Cond& operator=(const Cond&) = delete;
+    Cond& operator=(Cond&&) = delete;
+
+    explicit Cond(const std::string& name) : _mutex(name + "_mutex") {}
+
+    void notify_one()
+    {
+        _cv.notify_one();
+    }
+
+    void wait()
+    {
+        std::unique_lock<std::mutex> lk(_mutex._m, std::adopt_lock);
+        _cv.wait(lk);
+        lk.release(); // keep locked after wait
+    }
+
+    Mutex& get_mutex() { return _mutex; }
+
+private:
+    Mutex _mutex;
+    std::condition_variable _cv;
+};
+
+class Thread
+{
+public:
+    using EntryPoint = std::function<void()>;
+
+    Thread(const Thread&) = delete;
+    Thread(Thread&&) = delete;
+    Thread& operator=(const Thread&) = delete;
+    Thread& operator=(Thread&&) = delete;
+
+    Thread(const std::string& /*name*/, EntryPoint entry)
+        : _t(std::move(entry))
+    {}
+
+    ~Thread()
+    {
+        if (_t.joinable())
+            _t.detach();
+    }
+
+    void join() { _t.join(); }
+
+private:
+    std::thread _t;
+};
+
+#else // PKGI_SIMULATOR — original Vita implementation below
 
 class ScopeProcessLock
 {
@@ -43,7 +141,7 @@ public:
         if (res < 0)
         {
             // TODO throw
-            LOG("create mutex failed error=0x%08x", res);
+            LOG_ERR("Mutex creation failed: err=0x%08x", res);
         }
     }
 
@@ -53,7 +151,7 @@ public:
         if (res < 0)
         {
             // TODO assert
-            LOG("delete mutex failed error=0x%08x", res);
+            LOG_ERR("Mutex deletion failed: err=0x%08x", res);
         }
     }
 
@@ -63,7 +161,7 @@ public:
         if (res < 0)
         {
             // TODO throw
-            LOG("lock failed error=0x%08x", res);
+            LOG_ERR("Mutex lock failed: err=0x%08x", res);
         }
     }
 
@@ -85,7 +183,7 @@ public:
         if (res < 0)
         {
             // TODO throw
-            LOG("unlock failed error=0x%08x", res);
+            LOG_ERR("Mutex unlock failed: err=0x%08x", res);
         }
     }
 
@@ -110,7 +208,7 @@ public:
         if (res < 0)
         {
             // TODO throw
-            LOG("create cond failed error=0x%08x", res);
+            LOG_ERR("Condition variable creation failed: err=0x%08x", res);
         }
     }
 
@@ -120,7 +218,7 @@ public:
         if (res < 0)
         {
             // TODO assert
-            LOG("delete cond failed error=0x%08x", res);
+            LOG_ERR("Condition variable deletion failed: err=0x%08x", res);
         }
     }
 
@@ -130,7 +228,7 @@ public:
         if (res < 0)
         {
             // TODO throw
-            LOG("cond signal failed error=0x%08x", res);
+            LOG_ERR("Condition variable signal failed: err=0x%08x", res);
         }
     }
 
@@ -140,7 +238,7 @@ public:
         if (res < 0)
         {
             // TODO throw
-            LOG("wait cond failed error=0x%08x", res);
+            LOG_ERR("Condition variable wait failed: err=0x%08x", res);
         }
     }
 
@@ -171,7 +269,7 @@ public:
         if (_tid < 0)
         {
             // TODO throw
-            LOG("create thread failed error=0x%08x", _tid);
+            LOG_ERR("Thread creation failed: err=0x%08x", _tid);
         }
         auto entryp = new EntryPoint(std::move(entry));
         const auto res = sceKernelStartThread(_tid, sizeof(entryp), &entryp);
@@ -179,7 +277,7 @@ public:
         {
             delete entryp;
             // TODO throw
-            LOG("start thread failed error=0x%08x", res);
+            LOG_ERR("Thread start failed: err=0x%08x", res);
         }
     }
 
@@ -189,7 +287,7 @@ public:
         if (res < 0)
         {
             // TODO assert
-            LOG("thread delete failed error=0x%08x", res);
+            LOG_ERR("Thread deletion failed: err=0x%08x", res);
         }
     }
 
@@ -200,7 +298,7 @@ public:
         if (res < 0)
         {
             // TODO assert
-            LOG("thread join failed error=0x%08x", res);
+            LOG_ERR("Thread join failed: err=0x%08x", res);
         }
     }
 
@@ -214,16 +312,17 @@ private:
             auto entryp = std::unique_ptr<EntryPoint>(
                     *static_cast<EntryPoint**>(argp));
             (*entryp)();
-            LOG("thread successfully terminated");
+            LOG("Thread terminated successfully");
         }
         catch (const std::exception& e)
         {
-            LOG("got exception from thread: %s", e.what());
+            LOG_ERR("Thread terminated with exception: %s", e.what());
         }
         catch (...)
         {
-            LOG("got unknown exception from thread");
+            LOG_ERR("Thread terminated with unknown exception");
         }
         return 0;
     }
 };
+#endif // PKGI_SIMULATOR

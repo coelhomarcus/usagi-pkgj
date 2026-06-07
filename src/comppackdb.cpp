@@ -23,7 +23,7 @@ CompPackDatabase::CompPackDatabase(std::string const& dbPath) : _dbPath(dbPath)
 
 void CompPackDatabase::reopen()
 {
-    LOG("opening database %s", _dbPath.c_str());
+    LOG("Opening comppack database: %s", _dbPath.c_str());
     sqlite3* db;
     SQLITE_CHECK(sqlite3_open(_dbPath.c_str(), &db), "can't open database");
     _sqliteDb.reset(db);
@@ -46,7 +46,7 @@ void CompPackDatabase::reopen()
     }
     catch (const std::exception& e)
     {
-        LOG("%s. Trying migration.", e.what());
+        LOG_WARN("Schema migration needed: %s", e.what());
         SQLITE_EXEC(
                 _sqliteDb,
                 R"(DROP TABLE IF EXISTS entries)",
@@ -114,7 +114,7 @@ void CompPackDatabase::parse_entries(std::string& db_data)
             auto err = sqlite3_exec(
                     _sqliteDb.get(), "ROLLBACK", nullptr, nullptr, &errmsg);
             if (err != SQLITE_OK)
-                LOG("sqlite error: %s", errmsg);
+                LOG_ERR("SQLite error during comppack save: %s", errmsg);
         }
     };
 
@@ -189,7 +189,7 @@ void CompPackDatabase::update(Http* http, const std::string& update_url)
     if (update_url.empty())
         throw std::runtime_error("no comp pack url");
 
-    LOGF("loading comp pack list from {}", update_url);
+    LOGF("Fetching comppack list from: {}", update_url);
 
     http->start(update_url, 0);
 
@@ -213,12 +213,12 @@ void CompPackDatabase::update(Http* http, const std::string& update_url)
         throw std::runtime_error(
                 "comp pack list is empty... check for newer pkgj version");
 
-    LOG("parsing items");
+    LOG("Parsing comppack list");
 
     db_data.resize(db_size);
     parse_entries(db_data);
 
-    LOG("finished parsing");
+    LOG("Comppack list parsed successfully");
 }
 
 std::optional<CompPackDatabase::Item> CompPackDatabase::get(
@@ -228,7 +228,7 @@ std::optional<CompPackDatabase::Item> CompPackDatabase::get(
     // after the app is suspended, all further query will return disk I/O error
     reopen();
 
-    LOG("reloading database");
+    LOG("Reloading comppack database");
 
     sqlite3_stmt* stmt;
     SQLITE_CHECK(

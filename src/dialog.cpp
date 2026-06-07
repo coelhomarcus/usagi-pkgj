@@ -70,7 +70,7 @@ void pkgi_dialog_message(const char* text, int allow_close)
 
 void pkgi_dialog_error(const char* text)
 {
-    LOGF("Error dialog: {}", text);
+    LOGF("Showing error dialog: {}", text);
 
     pkgi_dialog_lock();
 

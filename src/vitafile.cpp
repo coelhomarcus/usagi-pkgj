@@ -29,7 +29,7 @@ void pkgi_mkdirs(const char* ppath)
 
         char last = *ptr;
         *ptr = 0;
-        LOG("mkdir %s", path.c_str());
+        LOG("Creating directory: %s", path.c_str());
         int err = sceIoMkdir(path.c_str(), 0777);
         if (err < 0 && err != PKGI_ERRNO_EEXIST)
             throw std::runtime_error(fmt::format(
@@ -46,7 +46,7 @@ void pkgi_rm(const char* file)
     int err = sceIoRemove(file);
     if (err < 0)
     {
-        LOG("error removing %s file, err=0x%08x", file, err);
+        LOG("Failed to delete file %s: err=0x%08x", file, err);
     }
 }
 
@@ -56,7 +56,7 @@ int64_t pkgi_get_size(const char* path)
     int err = sceIoGetstat(path, &stat);
     if (err < 0)
     {
-        LOG("cannot get size of %s, err=0x%08x", path, err);
+        LOG("Failed to get file size %s: err=0x%08x", path, err);
         return -1;
     }
     return stat.st_size;
@@ -99,7 +99,7 @@ void pkgi_rename(const std::string& from, const std::string& to)
 
 void* pkgi_create(const std::string& path)
 {
-    LOGF("sceIoOpen create on {}", path);
+    LOGF("Creating file: {}", path);
     SceUID fd = sceIoOpen(
             path.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
     if (fd < 0)
@@ -113,29 +113,29 @@ void* pkgi_create(const std::string& path)
 
 void* pkgi_openrw(const char* path)
 {
-    LOG("sceIoOpen openrw on %s", path);
+    LOG("Opening file for read/write: %s", path);
     SceUID fd = sceIoOpen(path, SCE_O_RDWR, 0777);
     if (fd < 0)
     {
-        LOG("cannot openrw %s, err=0x%08x", path, fd);
+        LOG("Failed to open %s for read/write: err=0x%08x", path, fd);
         return NULL;
     }
-    LOG("sceIoOpen returned fd=%d", fd);
+    LOG("Opened r/w fd=%d for %s", fd, path);
 
     return (void*)(intptr_t)fd;
 }
 
 void* pkgi_append(const char* path)
 {
-    LOG("sceIoOpen append on %s", path);
+    LOG("Opening file for append: %s", path);
     SceUID fd =
             sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
     if (fd < 0)
     {
-        LOG("cannot append %s, err=0x%08x", path, fd);
+        LOG("Failed to open %s for append: err=0x%08x", path, fd);
         return NULL;
     }
-    LOG("sceIoOpen returned fd=%d", fd);
+    LOG("Opened append fd=%d for %s", fd, path);
 
     return (void*)(intptr_t)fd;
 }
@@ -171,11 +171,11 @@ int pkgi_write(void* f, const void* buffer, uint32_t size)
 void pkgi_close(void* f)
 {
     SceUID fd = (SceUID)(intptr_t)f;
-    LOG("closing file %d", fd);
+    LOG("Closing file descriptor: %d", fd);
     int err = sceIoClose(fd);
     if (err < 0)
     {
-        LOG("close error 0x%08x", err);
+        LOG("Failed to close file descriptor: err=0x%08x", err);
     }
 }
 

@@ -2,7 +2,7 @@
 
 set -xe
 
-poetry install
+poetry install --no-root
 
 # create home dirs
 poetry run conan

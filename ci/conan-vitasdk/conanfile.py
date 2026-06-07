@@ -7,7 +7,7 @@ from conan.tools import files
 class VitasdkToolchainConan(ConanFile):
     name = "vitasdk-toolchain"
     lib_version = "2.527"
-    package_version = ""
+    package_version = ".1"
     exports_sources = "cmake-toolchain.patch"
     version = "%s%s" % (lib_version, package_version)
     settings = "os", "arch"
@@ -27,6 +27,9 @@ class VitasdkToolchainConan(ConanFile):
             "libpng",
             "libjpeg-turbo",
             "taihen",
+            "openssl",
+            "zstd",
+            "curl",
         ]
         for lib in additional_libs:
             lib = "{}.tar.xz".format(lib)

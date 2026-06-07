@@ -26,7 +26,7 @@ void FileDownload::update_progress()
 
 void FileDownload::start_download()
 {
-    LOGF("requesting {}", download_url);
+    LOGF("HTTP GET: {}", download_url);
     _http->start(download_url, 0);
 
     const auto http_length = _http->get_length();
@@ -34,7 +34,7 @@ void FileDownload::start_download()
         throw DownloadError("HTTP response has unknown length");
 
     download_size = http_length;
-    LOGF("http response length = {}", download_size);
+    LOGF("Download size: {} bytes", download_size);
 }
 
 void FileDownload::download_data(uint32_t size)
@@ -66,7 +66,7 @@ void FileDownload::download_data(uint32_t size)
 
 void FileDownload::download_file()
 {
-    LOG("downloading encrypted files");
+    LOG("Downloading encrypted content files");
 
     LOGF("creating {} file", root);
     item_file = pkgi_create(root.c_str());

@@ -13,9 +13,10 @@ endif()
 # useful for memory alignment constraints
 set(CMAKE_CXX_STANDARD 17)
 
-set(VITA_APP_NAME "PKGj")
-set(VITA_TITLEID  "PKGJ00000")
-set(VITA_VERSION  "0.58")
+set(VITA_APP_NAME "PKGj+" CACHE STRING "Vita application display name")
+set(VITA_TITLEID  "PKGJ00001" CACHE STRING "Vita Title ID (4 letters + 5 digits)")
+set(VITA_VERSION  "0.61" CACHE STRING "Vita application version (XX.XX format for param.sfo)")
+set(PKGI_DISPLAY_VERSION "0.61" CACHE STRING "Version string shown in the app header")
 
 option(PKGI_ENABLE_LOGGING "enables debug logging over udp multicast" OFF)
 
@@ -23,7 +24,7 @@ if(PKGI_ENABLE_LOGGING)
   add_definitions(-DPKGI_ENABLE_LOGGING)
 endif()
 
-add_definitions(-DPKGI_VERSION="${VITA_VERSION}" -D_GNU_SOURCE)
+add_definitions(-DPKGI_VERSION="${PKGI_DISPLAY_VERSION}" -D_GNU_SOURCE)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -fvisibility=hidden")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -fvisibility=hidden")
 

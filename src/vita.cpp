@@ -9,6 +9,7 @@ extern "C"
 #include "file.hpp"
 #include "http.hpp"
 #include "log.hpp"
+#include "logbuffer.hpp"
 #include "psx.hpp"
 
 #include <fmt/format.h>
@@ -44,10 +45,26 @@ extern "C"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <curl/curl.h>
 
 extern "C"
 {
     int _newlib_heap_size_user = 128 * 1024 * 1024;
+
+    // libcurl calls fcntl(sock, F_SETFD, FD_CLOEXEC) on every socket it opens.
+    // PS Vita's SceNet layer does not support this and returns an error, which
+    // curl treats as fatal (CURLE_COULDNT_CONNECT). Intercept via --wrap and
+    // silently succeed for F_SETFD so curl can proceed normally.
+    int __wrap_fcntl(int /*fd*/, int cmd, ...)
+    {
+        if (cmd == F_SETFD)
+            return 0;
+        // All other fcntl uses are unsupported on Vita anyway.
+        errno = ENOSYS;
+        return -1;
+    }
 }
 
 static vita2d_pgf* g_font;
@@ -73,8 +90,7 @@ static int g_log_socket;
 
 #define PKGI_ERRNO_ENOENT (int)(0x80010000 + SCE_NET_ENOENT)
 
-#ifdef PKGI_ENABLE_LOGGING
-void pkgi_log(const char* msg, ...)
+void pkgi_log(LogLevel level, const char* msg, ...)
 {
     char buffer[512];
 
@@ -83,12 +99,20 @@ void pkgi_log(const char* msg, ...)
     // TODO: why sceClibVsnprintf doesn't work here?
     int len = vsnprintf(buffer, sizeof(buffer) - 1, msg, args);
     va_end(args);
-    buffer[len] = '\n';
+    if (len < 0)
+        len = 0;
+    else if (len >= static_cast<int>(sizeof(buffer)))
+        len = sizeof(buffer) - 1;
+    buffer[len] = 0;
 
+    pkgi_log_buffer_append(level, buffer);
+
+#ifdef PKGI_ENABLE_LOGGING
+    buffer[len] = '\n';
     sceNetSend(g_log_socket, buffer, len + 1, 0);
     // sceKernelDelayThread(10);
-}
 #endif
+}
 
 
 int pkgi_snprintf(char* buffer, uint32_t size, const char* msg, ...)
@@ -170,6 +194,24 @@ int pkgi_is_korean_char(const unsigned int c)
     return 0;
 }
 
+int pkgi_is_japanese_char(const unsigned int c)
+{
+    unsigned short ch = c;
+    // hiragana block
+    if (0x3040 <= ch && ch <= 0x309f)
+        return 1;
+    // katakana block
+    if (0x30a0 <= ch && ch <= 0x30ff)
+        return 1;
+    // punctuation / fullwidth forms commonly used in Japanese text
+    if (0xff00 <= ch && ch <= 0xffef)
+        return 1;
+    // CJK unified ideographs
+    if (0x4e00 <= ch && ch <= 0x9fff)
+        return 1;
+    return 0;
+}
+
 int pkgi_is_latin_char(const unsigned int c)
 {
     unsigned short ch = c;
@@ -201,7 +243,7 @@ static void pkgi_start_debug_log(void)
     sceNetInetPton(SCE_NET_AF_INET, "239.255.0.100", &addr.sin_addr);
 
     sceNetConnect(g_log_socket, (SceNetSockaddr*)&addr, sizeof(addr));
-    LOG("debug logging socket initialized");
+    LOG("Debug logging socket initialized");
 #endif
 }
 
@@ -273,7 +315,7 @@ void pkgi_dialog_lock(void)
     int res = sceKernelLockLwMutex(&g_dialog_lock, 1, NULL);
     if (res < 0)
     {
-        LOG("dialog unlock failed error=0x%08x", res);
+    LOG_WARN("Dialog mutex lock failed: err=0x%08x", res);
     }
 }
 
@@ -282,7 +324,7 @@ void pkgi_dialog_unlock(void)
     int res = sceKernelUnlockLwMutex(&g_dialog_lock, 1);
     if (res < 0)
     {
-        LOG("dialog lock failed error=0x%08x", res);
+    LOG_WARN("Dialog mutex unlock failed: err=0x%08x", res);
     }
 }
 
@@ -437,7 +479,7 @@ void pkgi_dialog_input_text(const char* title, const char* text)
     int res = sceImeDialogInit(&param);
     if (res < 0)
     {
-        LOG("sceImeDialogInit failed, error 0x%08x", res);
+        LOG_ERR("IME dialog initialization failed: err=0x%08x", res);
     }
     else
     {
@@ -497,11 +539,13 @@ void pkgi_start(void)
 
     pkgi_start_debug_log();
 
-    LOG("initializing SSL");
+    LOG("Initializing SSL");
     sceSslInit(1024 * 1024);
-    LOG("initializing HTTP");
+    LOG("Initializing HTTP");
     sceHttpInit(1024 * 1024);
-    LOG("network initialized");
+    LOG("Initializing cURL");
+    curl_global_init(CURL_GLOBAL_ALL);
+    LOG("Network stack initialized");
 
     sceHttpsDisableOption(SCE_HTTPS_FLAG_SERVER_VERIFY);
 
@@ -537,7 +581,7 @@ void pkgi_start(void)
 
     if (scePromoterUtilityInit() < 0)
     {
-        LOG("cannot initialize promoter utility");
+        LOG_ERR("Failed to initialize promoter utility");
     }
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
@@ -557,7 +601,8 @@ void pkgi_start(void)
     }
 
     vita2d_init_advanced(4 * 1024 * 1024);
-    vita2d_system_pgf_config pgf_confs[3] = {
+    vita2d_system_pgf_config pgf_confs[4] = {
+            {SCE_FONT_LANGUAGE_JAPANESE, pkgi_is_japanese_char},
             {SCE_FONT_LANGUAGE_KOREAN, pkgi_is_korean_char},
             {SCE_FONT_LANGUAGE_LATIN, pkgi_is_latin_char},
             {SCE_FONT_LANGUAGE_DEFAULT, NULL},
@@ -567,9 +612,9 @@ void pkgi_start(void)
     g_time = sceKernelGetProcessTimeWide();
 
     sqlite3_rw_init();
-    LOG("start done");
+    LOG("Vita hardware initialization complete");
 
-    LOG("Caching PSX content id to title id list");
+    LOG("Caching PSX content ID to title ID mappings");
     pkgi_scan_pbps();
     
 }
@@ -780,7 +825,7 @@ void pkgi_start_thread(const char* name, pkgi_thread_entry* start)
             name, &pkgi_vita_thread, 0x40, 1024 * 1024, 0, 0, NULL);
     if (id < 0)
     {
-        LOG("failed to start %s thread", name);
+        LOG_ERR("Failed to start thread: %s", name);
     }
     else
     {
@@ -797,10 +842,10 @@ void pkgi_lock_process(void)
 {
     if (__atomic_fetch_add(&g_power_lock, 1, __ATOMIC_SEQ_CST) == 0)
     {
-        LOG("locking shell functionality");
+        LOG("Locking Vita shell");
         if (sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN) < 0)
         {
-            LOG("sceShellUtilLock failed");
+            LOG_WARN("Shell lock failed");
         }
     }
 }
@@ -809,10 +854,10 @@ void pkgi_unlock_process(void)
 {
     if (__atomic_sub_fetch(&g_power_lock, 1, __ATOMIC_SEQ_CST) == 0)
     {
-        LOG("unlocking shell functionality");
+        LOG("Unlocking Vita shell");
         if (sceShellUtilUnlock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN) < 0)
         {
-            LOG("sceShellUtilUnlock failed");
+            LOG_WARN("Shell unlock failed");
         }
     }
 }
@@ -823,7 +868,7 @@ pkgi_texture pkgi_load_png_raw(const void* data, uint32_t size)
     vita2d_texture* tex = vita2d_load_PNG_buffer((const char*)data);
     if (!tex)
     {
-        LOG("failed to load texture");
+        LOG_WARN("Failed to load background texture");
     }
     return tex;
 }
@@ -854,6 +899,25 @@ void pkgi_draw_rect(int x, int y, int w, int h, uint32_t color)
 void pkgi_draw_text(int x, int y, uint32_t color, const char* text)
 {
     vita2d_pgf_draw_text(g_font, x, y + 20, VITA_COLOR(color), 1.f, text);
+}
+
+void pkgi_draw_text_scale(int x, int y, uint32_t color, const char* text, float scale)
+{
+    uint8_t alpha = static_cast<uint8_t>(color >> 24);
+    if (alpha == 0)
+        alpha = 255;
+    uint32_t rgba = RGBA8(
+            static_cast<uint8_t>(color & 0xff),
+            static_cast<uint8_t>((color >> 8) & 0xff),
+            static_cast<uint8_t>((color >> 16) & 0xff),
+            alpha);
+    vita2d_pgf_draw_text(
+            g_font,
+            x,
+            y + static_cast<int>(20.f * scale),
+            rgba,
+            scale,
+            text);
 }
 
 int pkgi_text_width(const char* text)

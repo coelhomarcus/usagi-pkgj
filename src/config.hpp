@@ -2,7 +2,14 @@
 
 #include "db.hpp"
 
+#include <array>
 #include <string>
+
+struct CustomConfigEntry
+{
+    std::string name;
+    std::string url;
+};
 
 typedef struct Config
 {
@@ -10,7 +17,6 @@ typedef struct Config
     DbSortOrder order;
     uint32_t filter;
     int no_version_check;
-    int install_psp_as_pbp;
     std::string install_psp_psx_location;
 
     std::string games_url;
@@ -23,6 +29,19 @@ typedef struct Config
     std::string psp_dlcs_url;
 
     std::string comppack_url;
+
+    // Image panel settings
+    // thumbnail_url    : optional base URL for custom images fetched as
+    //                    {thumbnail_url}/{titleid}.jpg.
+    //                    Leave empty to fall back to the default PS Store cover.
+    // thumbnail_folder : local directory where images are stored/cached.
+    //                    Leave empty to use the default: ux0:pkgj/cover
+    // thumbnail_size   : panel size preset — 0=off, 1=small, 2=medium (default), 3=large
+    std::string thumbnail_url;
+    std::string thumbnail_folder;
+    int thumbnail_size{2};
+
+    std::array<CustomConfigEntry, 5> custom_entries;
 } Config;
 
 Config pkgi_load_config();

@@ -51,16 +51,24 @@ add_assets(assets
 add_executable(pkgj
   ${assets}
   src/aes128.cpp
+  src/annotationdb.cpp
   src/bgdl.cpp
+  src/configeditor.cpp
   src/comppackdb.cpp
   src/config.cpp
   src/db.cpp
+  src/customhandler.cpp
   src/dialog.cpp
   src/download.cpp
   src/downloader.cpp
   src/extractzip.cpp
   src/filedownload.cpp
+  src/browserview.cpp
   src/gameview.cpp
+  src/descriptionfetcher.cpp
+  src/screenshotfetcher.cpp
+  src/logbuffer.cpp
+  src/logviewer.cpp
   src/patchinfo.cpp
   src/patchinfofetcher.cpp
   src/psx.cpp
@@ -76,8 +84,11 @@ add_executable(pkgj
   src/vita.cpp
   src/vitafile.cpp
   src/vitahttp.cpp
+  src/curlhttp.cpp
   src/zrif.cpp
 )
+
+target_link_options(pkgj PRIVATE -Wl,--wrap,fcntl)
 
 target_link_libraries(pkgj
   vita2d
@@ -97,6 +108,10 @@ target_link_libraries(pkgj
   SceCtrl_stub
   SceDisplay_stub
   SceGxm_stub
+  curl
+  ssl
+  crypto
+  zstd
   SceHttp_stub
   SceNet_stub
   SceNetCtl_stub

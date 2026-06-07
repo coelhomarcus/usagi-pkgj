@@ -285,7 +285,7 @@ void TitleDatabase::update(Mode mode, Http* http, const std::string& update_url)
     db_total = 0;
     db_size = 0;
 
-    LOGF("loading update from {}", update_url);
+    LOGF("Fetching game database from: {}", update_url);
 
     http->start(update_url, 0);
 
@@ -317,7 +317,7 @@ void TitleDatabase::update(Mode mode, Http* http, const std::string& update_url)
 
     pkgi_rename(tmppath, filepath);
 
-    LOG("finished downloading");
+    LOG("Game database download complete");
 }
 
 namespace
@@ -490,6 +490,10 @@ void TitleDatabase::reload(
                         last_modification,
                         app_version,
                         fw_version,
+                        /*selected=*/false,
+                        /*description=*/"",
+                        /*user_flag=*/UserFlag::None,
+                        /*user_comment=*/"",
                 });
         }
         catch (const std::exception& e)
@@ -505,7 +509,7 @@ void TitleDatabase::reload(
             [&](const auto& a, const auto& b)
             { return lower(a, b, sort_by, sort_order); });
 
-    LOGF("reloaded {}/{} items", db.size(), _title_count);
+    LOGF("Database loaded: {}/{} items", db.size(), _title_count);
 }
 
 void TitleDatabase::get_update_status(uint32_t* updated, uint32_t* total)

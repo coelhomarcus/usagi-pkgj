@@ -1,7 +1,10 @@
 /build*
+!/build.sh
 /ci/build*
 /ci/conan-*/test_package*/build
 /.vscode
 .tags
 CMakeUserPresets.json
 TODO
+send_to_vita.sh
+send_to_ubuntu.sh

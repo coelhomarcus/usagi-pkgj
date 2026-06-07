@@ -53,7 +53,7 @@ Download::Download(std::unique_ptr<Http> http) : _http(std::move(http))
 
 void Download::download_start(void)
 {
-    LOGF("resuming pkg download from {} offset", download_offset);
+    LOGF("Resuming PKG download at offset {}", download_offset);
     info_update = pkgi_time_msec() + 1000;
     update_status("Downloading");
 }
@@ -394,7 +394,7 @@ void Download::download_data(
 
     if (!*_http)
     {
-        LOGF("requesting {} @ {}", download_url, download_offset);
+        LOGF("HTTP GET {} at offset {}", download_url, download_offset);
         _http->start(download_url, download_offset);
 
         const int64_t http_length = _http->get_length();
@@ -405,7 +405,7 @@ void Download::download_data(
 
         download_size = http_length + download_offset;
 
-        LOGF("http response length = {}, total pkg size = {}",
+        LOGF("HTTP Content-Length: {}, total PKG size: {}",
              http_length,
              download_size);
         info_start = pkgi_time_msec();
@@ -480,7 +480,7 @@ void Download::create_file()
 
     pkgi_mkdirs(folder.c_str());
 
-    LOGF("creating {} file", item_name);
+    LOGF("Creating PKG file: {}", item_name);
     item_file = pkgi_create(item_path.c_str());
     if (!item_file)
         throw formatEx<DownloadError>("cannot create file {}", item_name);
@@ -488,7 +488,7 @@ void Download::create_file()
 
 void Download::open_file()
 {
-    LOGF("opening {} file for resume", item_name);
+    LOGF("Opening file for resume: {}", item_name);
     item_file = pkgi_openrw(item_path.c_str());
     if (!item_file)
         throw formatEx<DownloadError>("cannot create file {}", item_name);
@@ -496,7 +496,7 @@ void Download::open_file()
 
 int Download::download_head(const uint8_t* rif)
 {
-    LOG("downloading pkg head");
+    LOG("Downloading PKG header");
 
     item_name = "Preparing...";
     item_path = fmt::format("{}/sce_sys/package/head.bin", root);
@@ -649,7 +649,7 @@ int Download::download_head(const uint8_t* rif)
             0,
             1);
 
-    LOG("head.bin downloaded");
+    LOG("PKG header (head.bin) downloaded");
     return 1;
 }
 
@@ -863,7 +863,7 @@ void Download::download_file_content_to_edat(uint64_t item_size)
 
 int Download::download_files(void)
 {
-    LOG("downloading encrypted files");
+    LOG("Downloading encrypted PKG content files");
 
     BOOST_SCOPE_EXIT_ALL(&)
     {
@@ -1031,13 +1031,13 @@ int Download::download_files(void)
         resuming = false;
     }
 
-    LOG("all files decrypted");
+    LOG("All PKG files decrypted successfully");
     return 1;
 }
 
 int Download::download_tail(void)
 {
-    LOG("downloading tail.bin");
+    LOG("Downloading PKG tail (tail.bin)");
 
     BOOST_SCOPE_EXIT_ALL(&)
     {
@@ -1070,7 +1070,7 @@ int Download::download_tail(void)
                 down.data(), read, 0, content_type != CONTENT_TYPE_PSX_GAME);
     }
 
-    LOG("tail.bin downloaded");
+    LOG("PKG tail (tail.bin) downloaded");
     return 1;
 }
 
@@ -1078,24 +1078,24 @@ int Download::check_integrity(const uint8_t* digest)
 {
     if (!digest)
     {
-        LOG("no integrity provided, skipping check");
+        LOG("No integrity hash provided, skipping verification");
         return 1;
     }
 
     uint8_t check[SHA256_DIGEST_SIZE];
     sha256_finish(&sha, check);
 
-    LOG("checking integrity of pkg");
+    LOG("Verifying PKG integrity");
     if (!pkgi_memequ(digest, check, SHA256_DIGEST_SIZE))
     {
-        LOG("pkg integrity is wrong, removing head.bin & resume data");
+        LOG_ERR("PKG integrity check failed, removing head.bin and resume data");
 
         pkgi_rm(fmt::format("{}/sce_sys/package/head.bin", root).c_str());
 
         throw DownloadError("pkg integrity failed, try downloading again");
     }
 
-    LOG("pkg integrity check succeeded");
+    LOG("PKG integrity verified");
     return 1;
 }
 
@@ -1266,7 +1266,7 @@ int Download::pkgi_download(
     }
     catch (const ResumeError& e)
     {
-        LOGF("deleting resume file");
+        LOGFE("Deleting resume file");
         try
         {
             pkgi_rm(fmt::format("{}.resume", root).c_str());
@@ -1274,7 +1274,7 @@ int Download::pkgi_download(
         }
         catch (const std::exception& e)
         {
-            LOGF("failed to delete resume file");
+            LOGFW("Failed to delete resume file");
         }
         throw;
     }
@@ -1318,7 +1318,7 @@ void Download::deserialize_state()
 
     try
     {
-        LOG("download resume file found");
+        LOG("Resume file found, will resume download");
 
         const auto head_path = fmt::format("{}/sce_sys/package/head.bin", root);
         head = pkgi_load(head_path);
@@ -1353,7 +1353,7 @@ void Download::deserialize_state()
 
         resuming = true;
 
-        LOGF("resuming download from {}/{}", download_offset, download_size);
+        LOGF("Resuming download: offset {}, size {}", download_offset, download_size);
     }
     catch (const std::exception& e)
     {

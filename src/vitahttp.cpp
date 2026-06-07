@@ -29,7 +29,7 @@ VitaHttp::~VitaHttp()
 {
     if (_http)
     {
-        LOG("http close");
+        LOG("HTTP connection closed");
         sceHttpDeleteRequest(_http->req);
         sceHttpDeleteConnection(_http->conn);
         sceHttpDeleteTemplate(_http->tmpl);
@@ -42,7 +42,7 @@ void VitaHttp::start(const std::string& url, uint64_t offset)
     if (_http)
         throw HttpError("HTTP connection already started");
 
-    LOG("http get");
+    LOG("HTTP GET request");
 
     pkgi_http* http = NULL;
     for (size_t i = 0; i < 4; i++)
@@ -61,7 +61,7 @@ void VitaHttp::start(const std::string& url, uint64_t offset)
     int conn = -1;
     int req = -1;
 
-    LOGF("starting http GET request for {}", url);
+    LOGF("HTTP GET: {}", url);
 
     if ((tmpl = sceHttpCreateTemplate(
                  PKGI_USER_AGENT, SCE_HTTP_VERSION_1_1, SCE_TRUE)) < 0)
@@ -170,7 +170,7 @@ void VitaHttp::abort()
     {
         const auto err = sceHttpAbortRequest(_http->req);
         if (err)
-            LOGF("abort() failed: {:#08x}", static_cast<uint32_t>(err));
+            LOGFW("HTTP abort failed: err={:#08x}", static_cast<uint32_t>(err));
     }
 }
 
@@ -188,12 +188,11 @@ int64_t VitaHttp::get_length()
     if (res == (int)SCE_HTTP_ERROR_NO_CONTENT_LENGTH ||
         res == (int)SCE_HTTP_ERROR_CHUNK_ENC)
     {
-        LOG("http response has no content length (or chunked "
-            "encoding)");
+        LOG("HTTP response has no Content-Length (chunked transfer assumed)");
         return 0;
     }
 
-    LOGF("http response length = {}", content_length);
+    LOGF("HTTP Content-Length: {} bytes", content_length);
     return content_length;
 }
 
@@ -217,7 +216,7 @@ void VitaHttp::check_status()
 
     const auto status = get_status();
 
-    LOGF("http status code = {}", status);
+    LOGF("HTTP response status: {}", status);
 
     if (status != 200 && status != 206)
         throw HttpError(fmt::format("bad http status: {}", status));

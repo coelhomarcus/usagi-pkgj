@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Restrict default token permissions; the release job overrides with contents: write.
+permissions:
+  contents: read
+
+jobs:
+  # ── PS Vita build ────────────────────────────────────────────────────────────
+  build-vita:
+    name: Build PS Vita (pkgj.vpk)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        run: sudo apt-get install -y ninja-build g++-12
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: pip install 'poetry<2.0'
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2/p
+          key: conan-vita-${{ runner.os }}-${{ hashFiles('ci/conan-vitasdk/conanfile.py', 'ci/conan-fmt/conanfile.py', 'ci/conan-libzip/conanfile.py', 'ci/conan-vitasqlite/conanfile.py', 'conanfile.py') }}
+          restore-keys: conan-vita-${{ runner.os }}-
+
+      - name: Build pkgj.vpk
+        env:
+          CC: gcc-12
+          CXX: g++-12
+        run: |
+          cd ci
+          ./setup_conan.sh
+          mkdir -p build && cd build
+          poetry run conan install ../.. \
+            --build missing \
+            -s build_type=RelWithDebInfo \
+            --profile:host vita \
+            --output-folder .
+          poetry run conan build ../.. \
+            -s build_type=RelWithDebInfo \
+            --profile:host vita \
+            --output-folder .
+
+      - name: Upload pkgj.vpk
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkgj-vita
+          path: ci/build/pkgj.vpk
+          if-no-files-found: error
+
+  # ── Host build (CLI + graphical simulator) ───────────────────────────────────
+  build-host:
+    name: Build Host (pkgj_cli + pkgj_sim)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build g++-12 pkg-config \
+            libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev \
+            libcurl4-openssl-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: pip install 'poetry<2.0'
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2/p
+          key: conan-host-${{ runner.os }}-${{ hashFiles('ci/conan-fmt/conanfile.py', 'ci/conan-libzip/conanfile.py', 'conanfile.py') }}
+          restore-keys: conan-host-${{ runner.os }}-
+
+      - name: Build pkgj_cli and pkgj_sim
+        env:
+          CC: gcc-12
+          CXX: g++-12
+        run: |
+          cd ci
+          ./setup_conan.sh
+          mkdir -p buildhost && cd buildhost
+          poetry run conan install ../.. \
+            --build missing \
+            -s build_type=RelWithDebInfo \
+            -s compiler=gcc \
+            -s compiler.version=12 \
+            -s compiler.libcxx=libstdc++11 \
+            --output-folder .
+          cmake ../.. \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DHOST_BUILD=ON \
+            -DBUILD_SIM=ON \
+            -DCMAKE_TOOLCHAIN_FILE=./conan_toolchain.cmake
+          ninja pkgj_cli pkgj_sim
+
+      - name: Upload pkgj_cli
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkgj-cli
+          path: ci/buildhost/pkgj_cli
+          if-no-files-found: error
+
+      - name: Upload pkgj_sim
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkgj-sim
+          path: ci/buildhost/pkgj_sim
+          if-no-files-found: error
+
+  # ── GitHub Release ────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [build-vita, build-host]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4.1.3
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          PRERELEASE_FLAG=""
+          if [[ "$TAG" == *"beta"* || "$TAG" == *"alpha"* || "$TAG" == *"rc"* ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            "pkgj-vita/pkgj.vpk#pkgj-${TAG}.vpk" \
+            "pkgj-cli/pkgj_cli#pkgj_cli-${TAG}" \
+            "pkgj-sim/pkgj_sim#pkgj_sim-${TAG}"

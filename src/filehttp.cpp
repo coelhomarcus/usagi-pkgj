@@ -8,7 +8,7 @@ FileHttp::FileHttp(const std::string& path) : override_path(path)
 
 void FileHttp::start(const std::string& url, uint64_t offset)
 {
-    LOGF("Fake downloading {}", url);
+    LOGF("[Debug] Simulated HTTP download: {}", url);
     f.open(override_path.empty() ? url : override_path);
     f.seekg(offset, std::ios::beg);
 }

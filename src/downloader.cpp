@@ -39,21 +39,21 @@ std::string type_to_string(Type type)
 Downloader::Downloader()
     : _cond("downloader_cond"), _thread("downloader_thread", [this] { run(); })
 {
-    LOG("new downloader");
+    LOG("Downloader initialized");
 }
 
 Downloader::~Downloader()
 {
-    LOG("destroying downloader");
+    LOG("Downloader shutdown requested");
     _dying = true;
     _cond.notify_one();
     _thread.join();
-    LOG("downloader destroyed");
+    LOG("Downloader thread stopped");
 }
 
 void Downloader::add(const DownloadItem& d)
 {
-    LOG("adding download %s", d.name.c_str());
+    LOG("Queued download: %s", d.name.c_str());
     {
         ScopeLock _(_cond.get_mutex());
         _queue.push_back(d);
@@ -136,7 +136,7 @@ void Downloader::run()
         }
         catch (const std::exception& e)
         {
-            LOG("download error: %s", e.what());
+            LOG_ERR("Download failed: %s", e.what());
             error(e.what());
         }
     }
@@ -150,7 +150,7 @@ void Downloader::do_download_package(const DownloadItem& item)
     };
 
     ScopeProcessLock _;
-    LOG("downloading %s", item.name.c_str());
+    LOG("[%s] Download started: %s", type_to_string(item.type).c_str(), item.name.c_str());
     auto download = std::make_unique<Download>(std::make_unique<VitaHttp>());
     download->save_as_iso = item.save_as_iso;
     download->update_progress_cb =
@@ -168,7 +168,7 @@ void Downloader::do_download_package(const DownloadItem& item)
                 item.rif.empty() ? nullptr : item.rif.data(),
                 item.digest.empty() ? nullptr : item.digest.data()))
         return;
-    LOG("download of %s completed!", item.name.c_str());
+    LOG("[%s] Download complete: %s", type_to_string(item.type).c_str(), item.name.c_str());
     switch (item.type)
     {
     case Game:
@@ -202,7 +202,7 @@ void Downloader::do_download_package(const DownloadItem& item)
     pkgi_rm(fmt::format("{}pkgj/{}.resume", item.partition, item.content)
                     .c_str());
     pkgi_delete_dir(fmt::format("{}pkgj/{}", item.partition, item.content));
-    LOG("install of %s completed!", item.name.c_str());
+    LOG("[%s] Install complete: %s", type_to_string(item.type).c_str(), item.name.c_str());
 }
 
 void Downloader::do_download_comppack(const DownloadItem& item)
@@ -213,7 +213,7 @@ void Downloader::do_download_comppack(const DownloadItem& item)
     };
 
     ScopeProcessLock _;
-    LOGF("downloading comppack {}", item.url);
+    LOGF("Comppack download started: {}", item.url);
     auto download =
             std::make_unique<FileDownload>(std::make_unique<VitaHttp>());
 
@@ -227,12 +227,12 @@ void Downloader::do_download_comppack(const DownloadItem& item)
 
     download->download(
             item.partition.c_str(), item.content.c_str(), item.url.c_str());
-    LOGF("download of comppack {} completed!", item.url);
+    LOGF("Comppack download complete: {}", item.url);
     pkgi_install_comppack(
             item.content, item.type == CompPackPatch, item.version);
     pkgi_rm(fmt::format("{}pkgj/{}-comp.ppk", item.partition, item.content)
                     .c_str());
-    LOG("install of %s completed!", item.name.c_str());
+    LOG("Comppack install complete: %s", item.name.c_str());
 }
 
 void Downloader::do_download(const DownloadItem& item)

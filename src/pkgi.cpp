@@ -4,9 +4,12 @@ extern "C"
 {
 #include "style.h"
 }
+#include "annotationdb.hpp"
 #include "bgdl.hpp"
 #include "comppackdb.hpp"
 #include "config.hpp"
+#include "configeditor.hpp"
+#include "customhandler.hpp"
 #include "db.hpp"
 #include "dialog.hpp"
 #include "download.hpp"
@@ -14,7 +17,9 @@ extern "C"
 #include "gameview.hpp"
 #include "imgui.hpp"
 #include "install.hpp"
+#include "logviewer.hpp"
 #include "menu.hpp"
+#include "browserview.hpp"
 #include "update.hpp"
 #include "utils.hpp"
 #include "vitahttp.hpp"
@@ -22,32 +27,43 @@ extern "C"
 #include "psm.hpp"
 #include "file.hpp"
 
+#ifndef PKGI_SIMULATOR
 #include <vita2d.h>
+#endif
+
+#ifdef PKGI_SIMULATOR
+#include <SDL2/SDL.h>
+extern SDL_Texture* sim_create_font_texture(const uint32_t* px, int w, int h);
+#endif
 
 #include <fmt/format.h>
 
 #include <memory>
 #include <set>
+#include <cctype>
 
+#ifndef PKGI_SIMULATOR
 #include <psp2common/npdrm.h>
 #include <psp2/io/stat.h>
+#endif
 
 #include <cstddef>
 #include <cstring>
 
-#define PKGI_UPDATE_URL \
-    "https://api.github.com/repos/blastrock/pkgj/releases/latest"
-
 namespace
 {
+// forward declaration — defined later in this anonymous namespace
+void pkgi_apply_annotations();
+
 typedef enum
 {
     StateError,
     StateRefreshing,
+    StateBrowse,
     StateMain,
 } State;
 
-State state = StateMain;
+State state = StateBrowse;
 Mode mode = ModeGames;
 
 uint32_t first_item;
@@ -78,10 +94,19 @@ std::set<std::string> installed_games;
 std::set<std::string> installed_themes;
 
 std::unique_ptr<GameView> gameview;
+std::unique_ptr<ConfigEditor> config_editor;
+std::unique_ptr<LogViewer> log_viewer;
+std::unique_ptr<BrowseView> browse_view;
+std::unique_ptr<AnnotationDatabase> annotation_db;
 bool need_refresh = true;
 bool runtime_install_queued = false;
 std::string content_to_refresh;
 void pkgi_reload();
+
+bool pkgi_overlay_is_open()
+{
+    return gameview || config_editor || log_viewer;
+}
 
 const char* pkgi_get_ok_str(void)
 {
@@ -191,9 +216,163 @@ std::string const& pkgi_get_url_from_mode(Mode mode)
             fmt::format("unknown mode: {}", static_cast<int>(mode)));
 }
 
+static const int PKGI_GROUP_COUNT = 29;
+
+static bool pkgi_utf8_next_codepoint(
+        const std::string& text,
+        size_t& pos,
+        uint32_t& codepoint)
+{
+    if (pos >= text.size())
+        return false;
+
+    const unsigned char c = static_cast<unsigned char>(text[pos]);
+    if (c < 0x80)
+    {
+        codepoint = c;
+        pos += 1;
+        return true;
+    }
+    if ((c & 0xE0) == 0xC0 && pos + 1 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        codepoint = ((c & 0x1F) << 6) | (c1 & 0x3F);
+        pos += 2;
+        return true;
+    }
+    if ((c & 0xF0) == 0xE0 && pos + 2 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        const unsigned char c2 = static_cast<unsigned char>(text[pos + 2]);
+        codepoint = ((c & 0x0F) << 12) | ((c1 & 0x3F) << 6) |
+                    (c2 & 0x3F);
+        pos += 3;
+        return true;
+    }
+    if ((c & 0xF8) == 0xF0 && pos + 3 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        const unsigned char c2 = static_cast<unsigned char>(text[pos + 2]);
+        const unsigned char c3 = static_cast<unsigned char>(text[pos + 3]);
+        codepoint = ((c & 0x07) << 18) | ((c1 & 0x3F) << 12) |
+                    ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+        pos += 4;
+        return true;
+    }
+
+    // Invalid UTF-8 sequence, skip one byte.
+    pos += 1;
+    return false;
+}
+
+static bool pkgi_is_other_script(uint32_t c)
+{
+    // CJK and East Asian blocks.
+    if ((0x3040 <= c && c <= 0x30FF) ||  // Hiragana/Katakana
+        (0x31F0 <= c && c <= 0x31FF) ||  // Katakana Phonetic Extensions
+        (0x3400 <= c && c <= 0x4DBF) ||  // CJK Extension A
+        (0x4E00 <= c && c <= 0x9FFF) ||  // CJK Unified Ideographs
+        (0xF900 <= c && c <= 0xFAFF) ||  // CJK Compatibility Ideographs
+        (0xAC00 <= c && c <= 0xD7AF) ||  // Hangul Syllables
+        (0x1100 <= c && c <= 0x11FF) ||  // Hangul Jamo
+        (0x3130 <= c && c <= 0x318F) ||  // Hangul Compatibility Jamo
+        (0x20000 <= c && c <= 0x2FA1F) || // Additional CJK
+        (0x3000 <= c && c <= 0x303F))    // CJK Symbols and Punctuation
+        return true;
+    return false;
+}
+
+static int pkgi_name_group(const std::string& name)
+{
+    size_t i = 0;
+    while (i < name.size() && std::isspace(static_cast<unsigned char>(name[i])))
+        ++i;
+
+    while (i < name.size())
+    {
+        uint32_t cp;
+        if (!pkgi_utf8_next_codepoint(name, i, cp))
+            continue;
+
+        if (cp < 0x80)
+        {
+            if (cp >= '0' && cp <= '9')
+                return 0;
+            if (cp == '@')
+                return 1;
+            if (cp >= 'A' && cp <= 'Z')
+                return static_cast<int>(cp - 'A') + 2;
+            if (cp >= 'a' && cp <= 'z')
+                return static_cast<int>(cp - 'a') + 2;
+            if (std::ispunct(static_cast<unsigned char>(cp)))
+                return 1;
+            if (std::isspace(static_cast<unsigned char>(cp)))
+                continue;
+            return 28;
+        }
+
+        if (pkgi_is_other_script(cp))
+            return 28;
+
+        // Non-ASCII non-CJK characters are treated as Other.
+        return 28;
+    }
+
+    return 28;
+}
+
+static const char* pkgi_group_label(int group)
+{
+    if (group == 0)
+        return "0-9";
+    if (group == 1)
+        return "@";
+    if (group >= 2 && group <= 27)
+    {
+        static char text[2] = "A";
+        text[0] = static_cast<char>('A' + group - 2);
+        return text;
+    }
+    return "Other";
+}
+
+static int pkgi_next_group(int current, const bool present[PKGI_GROUP_COUNT], bool forward)
+{
+    if (current < 0 || current >= PKGI_GROUP_COUNT)
+        current = 0;
+
+    for (int step = 1; step < PKGI_GROUP_COUNT; ++step)
+    {
+        int idx = forward
+                ? (current + step) % PKGI_GROUP_COUNT
+                : (current + PKGI_GROUP_COUNT - step) % PKGI_GROUP_COUNT;
+        if (present[idx])
+            return idx;
+    }
+    return current;
+}
+
+static uint32_t pkgi_first_item_with_group(int group)
+{
+    const uint32_t db_count = db ? db->count() : 0;
+    for (uint32_t i = 0; i < db_count; ++i)
+        if (pkgi_name_group(db->get(i)->name) == group)
+            return i;
+    return 0;
+}
+
+static std::string pkgi_group_overlay_text;
+static uint32_t pkgi_group_overlay_until = 0;
+
+static void pkgi_set_group_overlay(int group)
+{
+    pkgi_group_overlay_text = pkgi_group_label(group);
+    pkgi_group_overlay_until = pkgi_time_msec() + 2000;
+}
+
 void pkgi_refresh_thread(void)
 {
-    LOG("starting update");
+    LOG("Checking for app updates");
     try
     {
         auto mode_count = ModeCount + (config.comppack_url.empty() ? 0 : 2);
@@ -246,6 +425,7 @@ void pkgi_refresh_thread(void)
         first_item = 0;
         selected_item = 0;
         configure_db(db.get(), search_active ? search_text : NULL, &config);
+        pkgi_apply_annotations();
     }
     catch (const std::exception& e)
     {
@@ -332,12 +512,12 @@ void pkgi_friendly_size(char* text, uint32_t textlen, int64_t size)
     }
     else if (size < 1000LL * 1000)
     {
-        pkgi_snprintf(text, textlen, "%.2f " PKGI_UTF8_KB, size / 1024.f);
+        pkgi_snprintf(text, textlen, "%.2f " PKGI_UTF8_KB, size / 1000.f);
     }
     else if (size < 1000LL * 1000 * 1000)
     {
         pkgi_snprintf(
-                text, textlen, "%.2f " PKGI_UTF8_MB, size / 1024.f / 1024.f);
+                text, textlen, "%.2f " PKGI_UTF8_MB, size / 1000.f / 1000.f);
     }
     else
     {
@@ -345,7 +525,7 @@ void pkgi_friendly_size(char* text, uint32_t textlen, int64_t size)
                 text,
                 textlen,
                 "%.2f " PKGI_UTF8_GB,
-                size / 1024.f / 1024.f / 1024.f);
+                size / 1000.f / 1000.f / 1000.f);
     }
 }
 
@@ -361,6 +541,15 @@ void pkgi_refresh_list()
 {
     state = StateRefreshing;
     pkgi_start_thread("refresh_thread", &pkgi_refresh_thread);
+}
+
+void pkgi_mark_all_items_unknown()
+{
+    if (!db)
+        return;
+
+    for (uint32_t i = 0; i < db->count(); ++i)
+        db->get(i)->presence = PresenceUnknown;
 }
 
 void pkgi_do_main(Downloader& downloader, pkgi_input* input)
@@ -440,6 +629,35 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
             }
         }
 
+        if (input->pressed & PKGI_BUTTON_LT)
+        {
+            if (db_count != 0)
+            {
+                if (selected_item >= db_count)
+                    selected_item = 0;
+
+                bool present[PKGI_GROUP_COUNT] = {};
+                for (uint32_t i = 0; i < db_count; ++i)
+                    present[pkgi_name_group(db->get(i)->name)] = true;
+
+                int current_group = pkgi_name_group(db->get(selected_item)->name);
+                int group = pkgi_next_group(current_group, present, false);
+                if (group != current_group || !present[current_group])
+                {
+                    selected_item = pkgi_first_item_with_group(group);
+                    uint32_t max_items =
+                            avail_height / (font_height + PKGI_MAIN_ROW_PADDING) - 1;
+                    if (selected_item < first_item)
+                        first_item = selected_item;
+                    else if (selected_item > first_item + max_items)
+                        first_item = selected_item > max_items
+                                         ? selected_item - max_items
+                                         : 0;
+                    pkgi_set_group_overlay(group);
+                }
+            }
+        }
+
         if (input->active & PKGI_BUTTON_RIGHT)
         {
             uint32_t max_items =
@@ -451,6 +669,35 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
                 if (selected_item >= db_count)
                 {
                     selected_item = db_count - 1;
+                }
+            }
+        }
+
+        if (input->pressed & PKGI_BUTTON_RT)
+        {
+            if (db_count != 0)
+            {
+                if (selected_item >= db_count)
+                    selected_item = 0;
+
+                bool present[PKGI_GROUP_COUNT] = {};
+                for (uint32_t i = 0; i < db_count; ++i)
+                    present[pkgi_name_group(db->get(i)->name)] = true;
+
+                int current_group = pkgi_name_group(db->get(selected_item)->name);
+                int group = pkgi_next_group(current_group, present, true);
+                if (group != current_group || !present[current_group])
+                {
+                    selected_item = pkgi_first_item_with_group(group);
+                    uint32_t max_items =
+                            avail_height / (font_height + PKGI_MAIN_ROW_PADDING) - 1;
+                    if (selected_item < first_item)
+                        first_item = selected_item;
+                    else if (selected_item > first_item + max_items)
+                        first_item = selected_item > max_items
+                                         ? selected_item - max_items
+                                         : 0;
+                    pkgi_set_group_overlay(group);
                 }
             }
         }
@@ -605,7 +852,17 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
                         PKGI_MAIN_COLUMN_PADDING - sizew - col_name,
                 line_height);
         item->selected = std::find(selected_items.begin(), selected_items.end(), item) != selected_items.end();
-        pkgi_draw_text(col_name, y, item->selected ? PKGI_COLOR_TEXT_SELECTED : PKGI_COLOR_TEXT , item->name.c_str());
+        {
+            std::string display_name;
+            if (item->user_flag != UserFlag::None)
+                display_name = fmt::format("{} {}",
+                        user_flag_symbol(item->user_flag), item->name);
+            else
+                display_name = item->name;
+            pkgi_draw_text(col_name, y,
+                    item->selected ? PKGI_COLOR_TEXT_SELECTED : PKGI_COLOR_TEXT,
+                    display_name.c_str());
+        }
         pkgi_clip_remove();
 
         y += font_height + PKGI_MAIN_ROW_PADDING;
@@ -661,6 +918,21 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
         }
     }
 
+    if (!pkgi_group_overlay_text.empty() &&
+            pkgi_time_msec() < pkgi_group_overlay_until)
+    {
+        const float scale = 4.0f;
+        int w = static_cast<int>(pkgi_text_width(pkgi_group_overlay_text.c_str()) * scale);
+        int h = static_cast<int>(pkgi_text_height("M") * scale);
+        int text_top = (VITA_HEIGHT - h) / 2;
+        int x = (VITA_WIDTH - w) / 2;
+        int y = text_top;
+        pkgi_draw_rect(x - 12, text_top - 12, w + 24, h + 24, PKGI_COLOR_MENU_BACKGROUND);
+        const uint32_t overlay_color = (0x33u << 24) | PKGI_COLOR_TEXT_HEAD;
+        pkgi_draw_text_scale(
+                x, y, overlay_color, pkgi_group_overlay_text.c_str(), scale);
+    }
+
     if (input && (input->pressed & pkgi_ok_button()))
     {
         input->pressed &= ~pkgi_ok_button();
@@ -669,13 +941,17 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
             return;
         DbItem* item = db->get(selected_item);
 
-        if (mode == ModeGames)
+        if (mode == ModeGames || mode == ModePspGames)
             gameview = std::make_unique<GameView>(
+                mode,
                     &config,
                     &downloader,
                     item,
-                    comppack_db_games->get(item->titleid),
-                    comppack_db_updates->get(item->titleid));
+                mode == ModeGames ? comppack_db_games->get(item->titleid)
+                          : std::optional<CompPackDatabase::Item>{},
+                mode == ModeGames ? comppack_db_updates->get(item->titleid)
+                          : std::optional<CompPackDatabase::Item>{},
+                    annotation_db.get());
         else if (mode == ModeThemes || mode == ModeDemos)
         {
             pkgi_start_download(downloader, *item);
@@ -694,7 +970,7 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
             }
             else
             {
-                for(int i = 0; i < selected_items.size(); i++)
+                for(size_t i = 0; i < selected_items.size(); i++)
                 {
                     if (downloader.is_in_queue(mode_to_type(mode), selected_items[i]->content))
                     {
@@ -721,7 +997,33 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
     }
     else if (input && (input->pressed & PKGI_BUTTON_S))
     {
-        if (mode == ModeDlcs) 
+        /*
+        * Annotation Flag Cycling Logic
+        * ----------------------------
+        * This block handles user flag annotation for games.
+        * - When the S button is pressed in ModeGames, the currently selected game's user_flag is cycled forward (wraps around).
+        * - The new flag is saved immediately to the annotation database (AnnotationDatabase).
+        * - Flags are defined in src/annotationdb.hpp as UserFlag enum.
+        * - The annotation system allows users to mark games with custom statuses (Favorite, Good, Bad, Completed, etc.).
+        * - See also: src/annotationdb.cpp, src/db.hpp, src/gameview.cpp for UI integration.
+        *
+        * Related context: .github/copilot-instructions.md (Annotation Feature section)
+        */
+        if (mode == ModeGames || mode == ModePspGames)
+        {
+            input->pressed &= ~PKGI_BUTTON_S;
+            DbItem* item = db->get(selected_item);
+            if (item && annotation_db)
+            {
+                // Cycle flag forward (wraps around)
+                const int next = (static_cast<int>(item->user_flag) + 1) % UserFlagCount;
+                item->user_flag = static_cast<UserFlag>(next);
+                UserAnnotation ann = annotation_db->get(item->titleid);
+                ann.flag = item->user_flag;
+                annotation_db->set(item->titleid, ann);
+            }
+        }
+        else if (mode == ModeDlcs) 
         {
             input->pressed &= ~PKGI_BUTTON_S;
             DbItem* item = db->get(selected_item);
@@ -966,7 +1268,7 @@ void pkgi_do_tail(Downloader& downloader)
     int right = rightw + PKGI_MAIN_TEXT_PADDING;
 
     std::string bottom_text;
-    if (gameview || pkgi_dialog_is_open())
+    if (pkgi_overlay_is_open() || pkgi_dialog_is_open())
     {
         bottom_text = fmt::format(
                 "{} select {} close", pkgi_get_ok_str(), pkgi_get_cancel_str());
@@ -980,8 +1282,11 @@ void pkgi_do_tail(Downloader& downloader)
     }
     else
     {
-        if (mode == ModeGames)
+        if (mode == ModeGames || mode == ModePspGames)
+        {
             bottom_text += fmt::format("{} details ", pkgi_get_ok_str());
+            bottom_text += PKGI_UTF8_S " flag ";
+        }
         else
         {
             DbItem* item = db->get(selected_item);
@@ -1041,15 +1346,30 @@ void reposition(void)
     }
 }
 
+void pkgi_apply_annotations()
+{
+    if (!annotation_db)
+        return;
+    for (uint32_t i = 0; i < db->count(); ++i)
+    {
+        auto* item = db->get(i);
+        if (!item) continue;
+        const auto ann = annotation_db->get(item->titleid);
+        item->user_flag    = ann.flag;
+        item->user_comment = ann.comment;
+    }
+}
+
 void pkgi_reload()
 {
     try
     {
         configure_db(db.get(), search_active ? search_text : NULL, &config);
+        pkgi_apply_annotations();
     }
     catch (const std::exception& e)
     {
-        LOGF("error during reload: {}", e.what());
+        LOGFE("Database reload failed: {}", e.what());
         pkgi_dialog_error(
                 fmt::format(
                         "failed to reload db: {}, try to refresh?", e.what())
@@ -1072,7 +1392,7 @@ void pkgi_open_db()
     }
     catch (const std::exception& e)
     {
-        LOGF("error during database open: {}", e.what());
+        LOGFE("Database open failed: {}", e.what());
         throw formatEx<std::runtime_error>(
                 "DB initialization error: %s\nTry to delete them?");
     }
@@ -1081,15 +1401,17 @@ void pkgi_open_db()
 }
 }
 
-void pkgi_create_psp_rif(std::string contentid, uint8_t* rif)
+void pkgi_create_psp_rif([[maybe_unused]] std::string contentid,
+                         [[maybe_unused]] uint8_t* rif)
 {
+#ifndef PKGI_SIMULATOR
     SceNpDrmLicense license;
     memset(&license, 0x00, sizeof(SceNpDrmLicense));
     license.account_id = 0x0123456789ABCDEFLL;
     memset(license.ecdsa_signature, 0xFF, 0x28);
-    strncpy(license.content_id, contentid.c_str(), 0x30);
-
+    snprintf(license.content_id, sizeof(license.content_id), "%s", contentid.c_str());
     memcpy(rif, &license, PKGI_PSP_RIF_SIZE);
+#endif // PKGI_SIMULATOR
 }
 
 
@@ -1111,33 +1433,58 @@ void pkgi_download_psm_runtime_if_needed() {
 }
 
 
-void pkgi_start_download(Downloader& downloader, const DbItem& item)
+void pkgi_start_download(
+    Downloader& downloader,
+    const DbItem& item,
+    PspInstallMode psp_install_mode)
 {
     LOGF("[{}] {} - starting to install", item.content, item.name);
 
+#ifndef PKGI_SIMULATOR
     sceIoMkdir("ux0:bgdl", 0777);
+#else
+    pkgi_mkdirs("pkgj/bgdl");
+#endif
 
     try
     {
         // download PSM Runtime if a PSM game is requested to be installed ..
+#ifndef PKGI_SIMULATOR
         if(mode == ModePsmGames)
             pkgi_download_psm_runtime_if_needed();
+#endif
         // Just use the maximum size to be safe
         uint8_t rif[PKGI_PSM_RIF_SIZE];
         char message[256];
         if (item.zrif.empty() ||
             pkgi_zrif_decode(item.zrif.c_str(), rif, message, sizeof(message)))
         {
-            if ( 
-                mode == ModeGames || mode == ModeDlcs || mode == ModeDemos || mode == ModeThemes || // Vita contents
-                (MODE_IS_PSPEMU(mode) && pkgi_is_module_present("NoPspEmuDrm_kern")) || // Psp Contents
-                (mode == ModePsmGames && pkgi_is_module_present("NoPsmDrm")) // Psm Contents
-            )
-            {
+            const bool is_pspemudrm_mode = MODE_IS_PSPEMU(mode);
+#ifndef PKGI_SIMULATOR
+            const bool has_psp_bgdl =
+                    is_pspemudrm_mode && pkgi_is_module_present("NoPspEmuDrm_kern");
+            const bool use_psp_bgdl =
+                    is_pspemudrm_mode &&
+                    (psp_install_mode == PspInstallMode::LiveAreaPbp ||
+                     (psp_install_mode == PspInstallMode::Auto && has_psp_bgdl));
 
-                if (MODE_IS_PSPEMU(mode)) {
+            if (psp_install_mode == PspInstallMode::LiveAreaPbp && !has_psp_bgdl)
+                throw std::runtime_error(
+                        "NoPspEmuDrm is required to queue PSP installs in LiveArea");
+
+            if (
+                mode == ModeGames || mode == ModeDlcs || mode == ModeDemos || mode == ModeThemes ||
+                use_psp_bgdl ||
+                (mode == ModePsmGames && pkgi_is_module_present("NoPsmDrm")))
+            {
+                if (is_pspemudrm_mode) {
                     pkgi_create_psp_rif(item.content, rif);
                 }
+#else // PKGI_SIMULATOR — no bgdl / module checks; always direct download
+            [[maybe_unused]] const bool use_psp_bgdl = false;
+            if (mode == ModeGames || mode == ModeDlcs || mode == ModeDemos || mode == ModeThemes)
+            {
+#endif
                 
                 pkgi_start_bgdl(
                         mode_to_bgdl_type(mode),
@@ -1164,7 +1511,8 @@ void pkgi_start_download(Downloader& downloader, const DbItem& item)
                                                   item.digest.begin(),
                                                   item.digest.end())
                                         : std::vector<uint8_t>{},
-                        !config.install_psp_as_pbp,
+                        is_pspemudrm_mode &&
+                            psp_install_mode != PspInstallMode::LiveAreaPbp,
                         pkgi_get_mode_partition(),
                         ""});
             }
@@ -1207,7 +1555,7 @@ int main()
             pkgi_dialog_error(("Download failure: " + error).c_str());
         };
 
-        LOG("started");
+        LOG("PKGj started");
 
         config = pkgi_load_config();
         pkgi_dialog_init();
@@ -1218,7 +1566,35 @@ int main()
 
         pkgi_open_db();
 
+        browse_view = std::make_unique<BrowseView>(
+        config,
+                [](const BrowseNode& node)
+                {
+                    if (node.mode.has_value())
+                    {
+                        // Future: use node.group_filter to pre-filter the game
+                        // list by initial letter group (e.g. "A-D").
+                        pkgi_set_mode(*node.mode);
+                        state = StateMain;
+                        return;
+                    }
+
+                    if (!node.custom_tsv_url.empty())
+                    {
+                        pkgi_custom_open_list_template(
+                                node.label, node.custom_tsv_url);
+                    }
+                });
+
+        annotation_db = std::make_unique<AnnotationDatabase>(
+                std::string(pkgi_get_config_folder()) + "/annotations.db");
+        pkgi_apply_annotations();
+
+#ifdef PKGI_SIMULATOR
+        pkgi_texture background = nullptr; // no embedded assets in simulator
+#else
         pkgi_texture background = pkgi_load_png(background);
+#endif
 
         if (!config.no_version_check)
             start_update_thread();
@@ -1231,19 +1607,25 @@ int main()
         // Build and load the texture atlas into a texture
         uint32_t* pixels = NULL;
         int width, height;
+#ifndef PKGI_SIMULATOR
         if (!io.Fonts->AddFontFromFileTTF(
                     "sa0:/data/font/pvf/ltn0.pvf",
                     20.0f,
                     0,
                     io.Fonts->GetGlyphRangesDefault()))
             throw std::runtime_error("failed to load ltn0.pvf");
-        if (!io.Fonts->AddFontFromFileTTF(
+        {
+            ImFontConfig merge_cfg;
+            merge_cfg.MergeMode = true;
+            io.Fonts->AddFontFromFileTTF(
                     "sa0:/data/font/pvf/jpn0.pvf",
                     20.0f,
-                    0,
-                    io.Fonts->GetGlyphRangesJapanese()))
-            throw std::runtime_error("failed to load jpn0.pvf");
+                    &merge_cfg,
+                    io.Fonts->GetGlyphRangesJapanese());
+        }
+#endif
         io.Fonts->GetTexDataAsRGBA32((uint8_t**)&pixels, &width, &height);
+#ifndef PKGI_SIMULATOR
         vita2d_texture* font_texture =
                 vita2d_create_empty_texture(width, height);
         const auto stride = vita2d_texture_get_stride(font_texture) / 4;
@@ -1254,6 +1636,10 @@ int main()
                 texture_data[y * stride + x] = pixels[y * width + x];
 
         io.Fonts->TexID = font_texture;
+#else // PKGI_SIMULATOR
+        io.Fonts->TexID = reinterpret_cast<ImTextureID>(
+                sim_create_font_texture(pixels, width, height));
+#endif // PKGI_SIMULATOR
 
         init_imgui();
 
@@ -1265,27 +1651,56 @@ int main()
             io.DisplaySize.x = VITA_WIDTH;
             io.DisplaySize.y = VITA_HEIGHT;
 
-            if (gameview || pkgi_dialog_is_open())
-            {
-                io.AddKeyEvent(
-                        ImGuiKey_GamepadDpadUp, input.pressed & PKGI_BUTTON_UP);
-                io.AddKeyEvent(
-                        ImGuiKey_GamepadDpadDown,
-                        input.pressed & PKGI_BUTTON_DOWN);
-                io.AddKeyEvent(
-                        ImGuiKey_GamepadDpadLeft,
-                        input.pressed & PKGI_BUTTON_LEFT);
-                io.AddKeyEvent(
-                        ImGuiKey_GamepadDpadRight,
-                        input.pressed & PKGI_BUTTON_RIGHT);
-                io.AddKeyEvent(
-                        ImGuiKey_GamepadFaceDown,
-                        input.pressed & pkgi_ok_button());
-                if (input.pressed & pkgi_cancel_button() && gameview)
-                    gameview->close();
+            // Snapshot for log viewer (needs raw input BEFORE zeroing)
+            const pkgi_input input_snapshot = input;
 
-                input.active = 0;
+            const bool has_imgui_overlay =
+                    gameview || config_editor || pkgi_dialog_is_open();
+
+            if (has_imgui_overlay || log_viewer)
+            {
+                // Feed D-pad to ImGui only for ImGui-managed overlays
+                if (has_imgui_overlay)
+                {
+                    io.AddKeyEvent(
+                            ImGuiKey_GamepadDpadUp,
+                            input.pressed & PKGI_BUTTON_UP);
+                    io.AddKeyEvent(
+                            ImGuiKey_GamepadDpadDown,
+                            input.pressed & PKGI_BUTTON_DOWN);
+                    io.AddKeyEvent(
+                            ImGuiKey_GamepadDpadLeft,
+                            input.pressed & PKGI_BUTTON_LEFT);
+                    io.AddKeyEvent(
+                            ImGuiKey_GamepadDpadRight,
+                            input.pressed & PKGI_BUTTON_RIGHT);
+                    io.AddKeyEvent(
+                            ImGuiKey_GamepadFaceDown,
+                            input.pressed & pkgi_ok_button());
+                }
+
+                // Universal cancel / save handlers (read pressed before zeroing)
+                if (input.pressed & pkgi_cancel_button())
+                {
+                    if (gameview)
+                    {
+                        if (!gameview->handle_cancel())
+                            gameview->close();
+                    }
+                    else if (config_editor)
+                        config_editor->close();
+                    else if (log_viewer)
+                        log_viewer->close();
+                }
+                if ((input.pressed & PKGI_BUTTON_T) && config_editor)
+                    config_editor->save_and_close();
+
+                input.active  = 0;
                 input.pressed = 0;
+                // input.down is NOT zeroed: sdl_backend needs it to track
+                // how long a key has been held (hold-repeat detection).
+                // Overlays consume input via input_snapshot (taken above);
+                // pkgi_do_main is inhibited by active == 0.
             }
 
             if (need_refresh)
@@ -1299,7 +1714,7 @@ int main()
                     if (item)
                         item->presence = PresenceUnknown;
                     else
-                        LOGF("couldn't find {} for refresh",
+                        LOGF("Post-download refresh: content ID {} not found in database",
                              content_to_refresh);
                     content_to_refresh.clear();
                 }
@@ -1312,7 +1727,10 @@ int main()
 
             pkgi_draw_texture(background, 0, 0);
 
-            pkgi_do_head();
+            // Browse view renders its own header/footer; skip pkgi_do_head()
+            // in that state to avoid a conflicting title bar.
+            if (state != StateBrowse)
+                pkgi_do_head();
             switch (state)
             {
             case StateError:
@@ -1323,21 +1741,75 @@ int main()
                 pkgi_do_refresh();
                 break;
 
+            case StateBrowse:
+                // At the root of the browse tree, Back does nothing.
+                browse_view->update(input);
+                browse_view->render();
+                // Consume all input so menu / overlays do not react this frame.
+                input.active  = 0;
+                input.pressed = 0;
+                break;
+
             case StateMain:
                 pkgi_do_main(
                         downloader,
                         pkgi_dialog_is_open() || pkgi_menu_is_open() ? NULL
                                                                      : &input);
+                // Allow returning to the category tree with the cancel button
+                // when no overlay is active.
+                if (!pkgi_overlay_is_open() && !pkgi_dialog_is_open() &&
+                        !pkgi_menu_is_open() &&
+                        (input.pressed & pkgi_cancel_button()))
+                {
+                    state = StateBrowse;
+                    input.pressed &= ~pkgi_cancel_button();
+                }
                 break;
             }
 
-            pkgi_do_tail(downloader);
+            // Browse view draws its own footer; skip the game-list tail.
+            if (state != StateBrowse)
+                pkgi_do_tail(downloader);
 
             if (gameview)
             {
-                gameview->render();
+                // Check is_closed() BEFORE render() so that when the view
+                // closes we do not add the texture to the ImGui draw list for
+                // this frame. The destructor calls vita2d_wait_rendering_done()
+                // which then safely covers the previous frame before freeing.
                 if (gameview->is_closed())
                     gameview = nullptr;
+                else
+                    gameview->render();
+            }
+
+            if (config_editor)
+            {
+                if (config_editor->is_closed())
+                {
+                    const bool saved = config_editor->was_saved();
+                    config_editor = nullptr;
+                    if (saved)
+                    {
+                        config = pkgi_load_config();
+                        config_temp = config;
+                        pkgi_reload();
+                        pkgi_mark_all_items_unknown();
+                        reposition();
+                    }
+                }
+                else
+                {
+                    config_editor->render();
+                }
+            }
+
+            if (log_viewer)
+            {
+                if (log_viewer->is_closed())
+                    log_viewer = nullptr;
+                else
+                    log_viewer->render(input_snapshot);
             }
 
             if (pkgi_dialog_is_open())
@@ -1345,7 +1817,8 @@ int main()
                 pkgi_do_dialog();
             }
 
-            if (pkgi_dialog_input_update())
+            if (!pkgi_overlay_is_open() && !pkgi_dialog_is_open() &&
+                    pkgi_dialog_input_update())
             {
                 search_active = 1;
                 pkgi_dialog_input_get_text(search_text, sizeof(search_text));
@@ -1405,6 +1878,9 @@ int main()
                     case MenuResultRefresh:
                         pkgi_refresh_list();
                         break;
+                    case MenuResultBackToBrowse:
+                        state = StateBrowse;
+                        break;
                     case MenuResultShowGames:
                         pkgi_set_mode(ModeGames);
                         break;
@@ -1429,6 +1905,12 @@ int main()
                     case MenuResultShowPspDlcs:
                         pkgi_set_mode(ModePspDlcs);
                         break;
+                    case MenuResultOpenConfigEditor:
+                        config_editor = std::make_unique<ConfigEditor>(config);
+                        break;
+                    case MenuResultOpenLogViewer:
+                        log_viewer = std::make_unique<LogViewer>();
+                        break;
                     }
                 }
             }
@@ -1443,7 +1925,7 @@ int main()
     }
     catch (const std::exception& e)
     {
-        LOGF("Error in main: {}", e.what());
+        LOGFE("Fatal error in main loop: {}", e.what());
         state = StateError;
         pkgi_snprintf(
                 error_state, sizeof(error_state), "Fatal error: %s", e.what());
@@ -1458,6 +1940,6 @@ int main()
         pkgi_end();
     }
 
-    LOG("finished");
+    LOG("PKGj shutting down");
     pkgi_end();
 }
