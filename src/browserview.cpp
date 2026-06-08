@@ -39,14 +39,14 @@ extern "C"
 static std::vector<BrowseNode> build_tree(const Config& config)
 {
     auto root = std::vector<BrowseNode>{
-        { "PSVITA Games",  ModeGames,    {}, "", "" },
-        { "PSVITA DLCs",   ModeDlcs,     {}, "", "" },
-        { "PSVITA Demos",  ModeDemos,    {}, "", "" },
-        { "PSP Games",     ModePspGames, {}, "", "" },
-        { "PSP DLCs",      ModePspDlcs,  {}, "", "" },
-        { "PSONE Games",   ModePsxGames, {}, "", "" },
-        { "PSM Games",     ModePsmGames, {}, "", "" },
-        { "Themes",        ModeThemes,   {}, "", "" },
+        { "PSV Games",  ModeGames,    {}, "", "" },
+        { "PSV DLCs",   ModeDlcs,     {}, "", "" },
+        { "PSV Themes", ModeThemes,   {}, "", "" },
+        { "PSV Demos",  ModeDemos,    {}, "", "" },
+        { "PSM Games",  ModePsmGames, {}, "", "" },
+        { "PSP Games",  ModePspGames, {}, "", "" },
+        { "PSP DLCs",   ModePspDlcs,  {}, "", "" },
+        { "PS1 Games",  ModePsxGames, {}, "", "" },
     };
 
     int custom_number = 1;
