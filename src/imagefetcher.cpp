@@ -8,6 +8,9 @@
 
 #ifndef PKGI_SIMULATOR
 #include <vita2d.h>
+#include <jpeglib.h>
+#include <png.h>
+#include <setjmp.h>
 #else
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -28,6 +31,7 @@ static vita2d_texture* sim_load_image_file(const char* path)
 #include <chrono>
 #include <cstring>
 #include <fmt/format.h>
+#include <limits>
 
 namespace
 {
@@ -152,75 +156,129 @@ vita2d_texture* decode_cover_from_path(const std::string& path)
 }
 
 #ifndef PKGI_SIMULATOR
-// Copies a just-decoded, never-drawn vita2d_texture's pixels into a plain
-// packed RGBA8 buffer (see DecodedCover). vita2d's PNG/JPEG loaders only
-// ever produce one of three pixel layouts, classified here the same way
-// vita2d itself does internally (mask against the base-format bits) rather
-// than an exhaustive format switch, since that's all that determines
-// bytes-per-pixel and channel layout:
-//
-//   SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8U8 — PNG path (tagged A8B8G8R8).
-//     Memory order is actually R,G,B,A: vita2d_image_png.c decodes with
-//     png_set_filler(..., PNG_FILLER_AFTER), and libpng's documented
-//     behavior for that is to write R,G,B then append the alpha byte
-//     after — confirmed by reading that source directly, not inferred
-//     from the format tag's name.
-//   SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8 — color JPEG path (tagged
-//     U8U8U8_BGR). vita2d never overrides libjpeg's out_color_space after
-//     jpeg_read_header(), whose default for a non-grayscale JPEG is
-//     JCS_RGB — so memory order is R,G,B despite the "BGR" tag (SCE
-//     format names read right-to-left for memory order, consistent with
-//     the confirmed PNG case above: tag "A8B8G8R8" reversed is R8G8B8A8).
-//     No alpha channel; synthesized as opaque.
-//   default (SCE_GXM_TEXTURE_BASE_FORMAT_U8, grayscale JPEG's U8_R111) —
-//     one byte of luminance per pixel, replicated to R,G,B, opaque alpha.
-DecodedCover extract_decoded_cover(vita2d_texture* tex)
+bool cover_size_is_valid(uint32_t width, uint32_t height)
+{
+    if (width == 0 || height == 0)
+        return false;
+
+    const size_t max = std::numeric_limits<size_t>::max();
+    return static_cast<size_t>(width) <= max / height / 4;
+}
+
+DecodedCover decode_png_cover_from_memory(const std::vector<uint8_t>& data)
 {
     DecodedCover cover;
 
-    const unsigned int w      = vita2d_texture_get_width(tex);
-    const unsigned int h      = vita2d_texture_get_height(tex);
-    const unsigned int stride = vita2d_texture_get_stride(tex);
-    const uint8_t* src = static_cast<const uint8_t*>(vita2d_texture_get_datap(tex));
-    if (w == 0 || h == 0 || !src)
-        return cover; // width == 0 signals failure to the caller
+    png_image image;
+    memset(&image, 0, sizeof(image));
+    image.version = PNG_IMAGE_VERSION;
 
-    cover.width  = w;
-    cover.height = h;
-    cover.pixels.resize(static_cast<size_t>(w) * h * 4);
+    if (!png_image_begin_read_from_memory(&image, data.data(), data.size()))
+        return cover;
 
-    const uint32_t base = vita2d_texture_get_format(tex) & 0x9f000000u;
-    for (unsigned int y = 0; y < h; ++y)
+    image.format = PNG_FORMAT_RGBA;
+    if (!cover_size_is_valid(image.width, image.height))
     {
-        const uint8_t* srow = src + static_cast<size_t>(y) * stride;
-        uint8_t* drow = cover.pixels.data() + static_cast<size_t>(y) * w * 4;
+        png_image_free(&image);
+        return cover;
+    }
 
-        switch (base)
+    cover.width  = image.width;
+    cover.height = image.height;
+    cover.pixels.resize(static_cast<size_t>(cover.width) * cover.height * 4);
+
+    if (!png_image_finish_read(&image, nullptr, cover.pixels.data(), 0, nullptr))
+    {
+        cover = {};
+        png_image_free(&image);
+        return cover;
+    }
+
+    png_image_free(&image);
+    return cover;
+}
+
+struct JpegErrorManager
+{
+    jpeg_error_mgr pub;
+    jmp_buf        jump;
+};
+
+void jpeg_error_exit(j_common_ptr cinfo)
+{
+    auto* err = reinterpret_cast<JpegErrorManager*>(cinfo->err);
+    longjmp(err->jump, 1);
+}
+
+DecodedCover decode_jpeg_cover_from_memory(const std::vector<uint8_t>& data)
+{
+    DecodedCover cover;
+
+    jpeg_decompress_struct cinfo;
+    memset(&cinfo, 0, sizeof(cinfo));
+
+    JpegErrorManager jerr;
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = jpeg_error_exit;
+
+    bool created = false;
+    if (setjmp(jerr.jump))
+    {
+        if (created)
+            jpeg_destroy_decompress(&cinfo);
+        return {};
+    }
+
+    jpeg_create_decompress(&cinfo);
+    created = true;
+    jpeg_mem_src(&cinfo, data.data(), data.size());
+    jpeg_read_header(&cinfo, TRUE);
+    cinfo.out_color_space = JCS_RGB;
+    jpeg_start_decompress(&cinfo);
+
+    const uint32_t width  = cinfo.output_width;
+    const uint32_t height = cinfo.output_height;
+    if (!cover_size_is_valid(width, height) || cinfo.output_components == 0)
+    {
+        jpeg_destroy_decompress(&cinfo);
+        return cover;
+    }
+
+    cover.width  = width;
+    cover.height = height;
+    cover.pixels.resize(static_cast<size_t>(width) * height * 4);
+
+    const size_t component_count = cinfo.output_components;
+    std::vector<uint8_t> row(static_cast<size_t>(width) * component_count);
+
+    while (cinfo.output_scanline < cinfo.output_height)
+    {
+        const JDIMENSION y = cinfo.output_scanline;
+        JSAMPROW rowp = row.data();
+        jpeg_read_scanlines(&cinfo, &rowp, 1);
+
+        uint8_t* dst = cover.pixels.data() + static_cast<size_t>(y) * width * 4;
+        for (uint32_t x = 0; x < width; ++x)
         {
-        case SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8U8:
-            memcpy(drow, srow, static_cast<size_t>(w) * 4);
-            break;
-        case SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8:
-            for (unsigned int x = 0; x < w; ++x)
+            const uint8_t* src = row.data() + static_cast<size_t>(x) * component_count;
+            if (component_count == 1)
             {
-                drow[x * 4 + 0] = srow[x * 3 + 0];
-                drow[x * 4 + 1] = srow[x * 3 + 1];
-                drow[x * 4 + 2] = srow[x * 3 + 2];
-                drow[x * 4 + 3] = 255;
+                dst[x * 4 + 0] = src[0];
+                dst[x * 4 + 1] = src[0];
+                dst[x * 4 + 2] = src[0];
             }
-            break;
-        default:
-            for (unsigned int x = 0; x < w; ++x)
+            else
             {
-                const uint8_t g   = srow[x];
-                drow[x * 4 + 0] = g;
-                drow[x * 4 + 1] = g;
-                drow[x * 4 + 2] = g;
-                drow[x * 4 + 3] = 255;
+                dst[x * 4 + 0] = src[0];
+                dst[x * 4 + 1] = src[1];
+                dst[x * 4 + 2] = src[2];
             }
-            break;
+            dst[x * 4 + 3] = 255;
         }
     }
+
+    jpeg_finish_decompress(&cinfo);
+    jpeg_destroy_decompress(&cinfo);
     return cover;
 }
 #else
@@ -263,6 +321,27 @@ DecodedCover decode_cover_surface(const std::string& path)
     return cover;
 }
 #endif
+
+DecodedCover decode_cover_pixels_from_path(const std::string& path)
+{
+#ifndef PKGI_SIMULATOR
+    try
+    {
+        const std::vector<uint8_t> data = pkgi_load(path);
+        const bool is_png = path.size() >= 4 &&
+                path.compare(path.size() - 4, 4, ".png") == 0;
+        return is_png ? decode_png_cover_from_memory(data)
+                      : decode_jpeg_cover_from_memory(data);
+    }
+    catch (const std::exception& e)
+    {
+        LOGFW("[ImageFetcher] failed to read {}: {}", path, e.what());
+        return {};
+    }
+#else
+    return decode_cover_surface(path);
+#endif
+}
 }
 
 std::vector<ImageFetcher::Source> ImageFetcher::_build_sources(
@@ -537,24 +616,7 @@ std::optional<DecodedCover> ImageFetcher::take_decoded_cover()
     _cover_taken    = true;
     const std::string path = std::move(_pending_image_path);
 
-#ifndef PKGI_SIMULATOR
-    vita2d_texture* tmp = decode_cover_from_path(path);
-    if (!tmp)
-    {
-        LOGFW("[ImageFetcher] failed to decode {}, removing", path);
-        pkgi_rm(path.c_str());
-        _status = Status::Error;
-        return std::nullopt;
-    }
-
-    // tmp was never drawn, so unlike a texture that's been shown on screen
-    // and then evicted, freeing it right away is safe regardless of Vita3K's
-    // queued-GPU-command timing — see this method's doc comment.
-    DecodedCover cover = extract_decoded_cover(tmp);
-    vita2d_free_texture(tmp);
-#else
-    DecodedCover cover = decode_cover_surface(path);
-#endif
+    DecodedCover cover = decode_cover_pixels_from_path(path);
 
     if (cover.width == 0 || cover.height == 0)
     {

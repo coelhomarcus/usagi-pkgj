@@ -76,17 +76,12 @@ public:
     // caller to copy into its own persistent texture-pool slot
     // (GridTexturePool, src/gridtexturepool.hpp).
     //
-    // The decode still goes through a short-lived vita2d_texture (same
-    // decoder get_texture() uses), but that texture is never drawn — its
-    // pixels are copied out and it's freed immediately, all before this call
-    // returns. Vita3K only syncs/uploads a texture's backing memory to the
-    // GPU when the texture is actually bound for a draw call, so a texture
-    // that's never drawn is never at risk of being freed while a queued GPU
-    // command still references it — which is what made the grid's old
-    // approach (one lasting texture per visible cover, evicted and freed on
-    // scroll) crash under Vita3K's async Vulkan emulation. The caller
-    // decides how many of these to request per frame; skip the call entirely
-    // to rate-limit rather than passing a flag in.
+    // On Vita this path decodes with CPU-side libpng/libjpeg helpers instead
+    // of making a temporary vita2d_texture. That keeps grid cover decode out
+    // of the GXM map/unmap lifetime entirely; the only texture touched by the
+    // grid is the persistent GridTexturePool slot. The caller decides how many
+    // of these to request per frame; skip the call entirely to rate-limit
+    // rather than passing a flag in.
     //
     // Returns std::nullopt if not ready yet (still downloading), on decode
     // failure, or if already taken — each ImageFetcher only ever yields one

@@ -36,10 +36,10 @@ void CurlHttp::start(const std::string& url, uint64_t offset)
     // once transfers actually run concurrently, which made it hard to fully
     // rule out with confidence. This function is the only thing that
     // touches curl/OpenSSL, and cover downloads are tiny (tens of KB, well
-    // under a second each), so serializing here trades away WorkerPool's
-    // theoretical 3-way network overlap for a guarantee — independent of
-    // whether the locking-callback setup is airtight — that only one thread
-    // is ever inside libcurl/OpenSSL at a time.
+    // under a second each), so serializing here trades away any theoretical
+    // network overlap for a guarantee — independent of whether the
+    // locking-callback setup is airtight — that only one thread is ever
+    // inside libcurl/OpenSSL at a time.
     //
     // Lazily constructed (not a namespace-scope global) so the underlying
     // kernel mutex is never created before pkgi_start() has run.

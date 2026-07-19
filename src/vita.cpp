@@ -17,6 +17,7 @@ extern "C"
 #include <boost/scope_exit.hpp>
 
 #include <string>
+#include <stdexcept>
 #include <vita2d.h>
 
 #include <psp2/appmgr.h>
@@ -534,9 +535,16 @@ void pkgi_dialog_input_get_text(char* text, uint32_t size)
 namespace
 {
 SceKernelLwMutexWork* g_openssl_locks = nullptr;
+int g_openssl_lock_count = 0;
 
 void pkgi_openssl_lock_cb(int mode, int n, const char*, int)
 {
+    if (!g_openssl_locks || n < 0 || n >= g_openssl_lock_count)
+    {
+        LOG_ERR("openssl lock callback received invalid lock index: %d", n);
+        __builtin_trap();
+    }
+
     if (mode & CRYPTO_LOCK)
         sceKernelLockLwMutex(&g_openssl_locks[n], 1, nullptr);
     else
@@ -552,6 +560,7 @@ void pkgi_openssl_threadid_cb(CRYPTO_THREADID* id)
 void pkgi_openssl_init_locks()
 {
     const int count = CRYPTO_num_locks();
+    g_openssl_lock_count = count;
     // Lives for the whole process — OpenSSL may take these locks from any
     // thread at any point until exit, so they are deliberately never freed.
     // Zero-initialized (the () — matters: SceKernelLwMutexWork is a plain
@@ -576,7 +585,10 @@ void pkgi_openssl_init_locks()
                 0,
                 nullptr);
         if (res < 0)
+        {
             LOG_ERR("openssl lock %d creation failed: err=0x%08x", i, res);
+            throw std::runtime_error("OpenSSL lock creation failed");
+        }
     }
     CRYPTO_THREADID_set_callback(pkgi_openssl_threadid_cb);
     CRYPTO_set_locking_callback(pkgi_openssl_lock_cb);

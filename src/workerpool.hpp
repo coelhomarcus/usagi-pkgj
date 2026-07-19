@@ -28,6 +28,8 @@
 class WorkerSlot
 {
 public:
+    static constexpr size_t kImageWorkerStackSize = 256 * 1024;
+
     WorkerSlot()  = default;
     ~WorkerSlot()
     {
@@ -76,13 +78,23 @@ public:
 
         // Wrap fn: after fn() returns, mark the slot idle again so the next
         // try_submit() can start a new task on the following frame.
-        _thread = std::make_unique<Thread>(
-                "img_worker",
-                [this, fn = std::move(fn)]() mutable
-                {
-                    fn();
-                    _running.store(false, std::memory_order_release);
-                });
+        try
+        {
+            _thread = std::make_unique<Thread>(
+                    "img_worker",
+                    [this, fn = std::move(fn)]() mutable
+                    {
+                        fn();
+                        _running.store(false, std::memory_order_release);
+                    },
+                    kImageWorkerStackSize);
+        }
+        catch (...)
+        {
+            _running.store(false, std::memory_order_release);
+            _current_task_id.clear();
+            throw;
+        }
 
         return true;
     }
@@ -146,7 +158,12 @@ public:
     // Bounds how many cover downloads can be in flight at once.
     static WorkerPool& image_workers()
     {
-        static WorkerPool pool(3);
+        // CurlHttp::start() is serialized process-wide anyway, and the cover
+        // pipeline is currently being hardened against Vita3K/render-thread
+        // timing issues. Keep image fetching serial so background workers do
+        // not add extra stack, heap, log, or cache-file concurrency while the
+        // UI-side texture lifetime is the active risk.
+        static WorkerPool pool(1);
         return pool;
     }
 

@@ -53,6 +53,8 @@ GridTexturePool::Entry GridTexturePool::store(
                 slot = &s;
     }
 
+    const bool reusing_populated_slot = slot->tex && !slot->key.empty();
+
     if (!slot->tex)
     {
 #ifndef PKGI_SIMULATOR
@@ -72,6 +74,18 @@ GridTexturePool::Entry GridTexturePool::store(
             return {};
         }
     }
+
+#ifndef PKGI_SIMULATOR
+    if (reusing_populated_slot)
+    {
+        // The pool keeps texture objects alive, but reusing a slot still
+        // mutates the same backing memory Vita3K may be copying into a Vulkan
+        // staging buffer from the previous frame. Wait before overwriting the
+        // slot's CPU-side pixels so reuse has the same lifetime guarantee as
+        // the earlier "wait before free" path.
+        vita2d_wait_rendering_done();
+    }
+#endif
 
     blit_into_slot(*slot, cover);
     slot->key       = key;

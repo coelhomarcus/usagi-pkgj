@@ -32,10 +32,10 @@ struct vita2d_texture;
 // alive for the process lifetime. A cover is displayed by copying its
 // decoded pixels (ImageFetcher::take_decoded_cover(), which never creates a
 // lasting texture of its own) into a slot's existing texture and drawing
-// that — content changes, but the texture object and its GPU memory never
-// do, so there's never a moment where Vita3K's render thread could be
-// referencing memory that's already been returned to the system. Slots are
-// reused LRU once all kSlotCount are in use.
+// that. The texture object and allocation stay alive, and slot reuse waits
+// for in-flight rendering before mutating the existing backing memory, so
+// Vita3K cannot be left uploading either freed memory or a slot being
+// overwritten. Slots are reused LRU once all kSlotCount are in use.
 //
 // All slots share one fixed canvas size (kSlotW x kSlotH) so every cover —
 // PS Vita/PSP's vertical box art or PSX's square art — fits inside without
