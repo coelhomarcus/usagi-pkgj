@@ -12,6 +12,8 @@
 
 #include <optional>
 
+struct pkgi_input;
+
 class GameView
 {
 public:
@@ -29,6 +31,7 @@ public:
     }
 
     void render();
+    void update(const pkgi_input& input);
     void refresh();
 
     // Called by pkgi.cpp instead of close() when the cancel button is
@@ -64,10 +67,8 @@ private:
 
     bool _closed{false};
 
-    // Seizes ImGui nav focus for the button column on the first render, so
-    // the user lands straight on "Install Game" instead of having to pick a
-    // side first — the left column is a static cover image, never
-    // interactive, so there is nothing to "enter" there.
+    // Gives the details window focus on the first render. Actions are handled
+    // directly by controller shortcuts, not by navigating ImGui buttons.
     bool _request_focus{true};
 
     std::unique_ptr<PatchInfoFetcher>    _patch_info_fetcher;
@@ -80,6 +81,7 @@ private:
     void start_download_package(
             PspInstallMode psp_install_mode = PspInstallMode::Auto);
     void cancel_download_package();
+    void toggle_comppack(bool patch);
     void start_download_comppack(bool patch);
     void cancel_download_comppacks(bool patch);
 };

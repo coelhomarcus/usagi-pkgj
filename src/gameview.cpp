@@ -92,16 +92,24 @@ ImVec4 pkgi_color_to_imgui(uint32_t color)
             1.0f);
 }
 
-void draw_button_hint(uint32_t button, const char* text)
+void draw_button_hint(uint32_t button, const char* text, bool indent)
 {
-    ImGui::SetCursorPosX(
-            ImGui::GetCursorPosX() + ImGui::CalcTextSize("  ").x);
+    if (indent)
+    {
+        ImGui::SetCursorPosX(
+                ImGui::GetCursorPosX() + ImGui::CalcTextSize("  ").x);
+    }
     ImGui::TextColored(
             pkgi_color_to_imgui(pkgi_button_color(button)),
             "%s",
             pkgi_button_str(button));
     ImGui::SameLine(0.0f, 0.0f);
     ImGui::TextDisabled(" %s", text);
+}
+
+void same_line_hint_gap()
+{
+    ImGui::SameLine(0.0f, ImGui::CalcTextSize("    ").x);
 }
 
 void draw_centered_status_text(
@@ -363,65 +371,11 @@ void GameView::render()
             row("Patch compat pack:", _comppack_versions.patch.c_str());
         }
 
+        // ── Diagnostic ───────────────────────────────────────────────────────
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-
-        // ── Diagnostic ───────────────────────────────────────────────────────
         printDiagnostic();
-        ImGui::Spacing();
-
-        // ── Action buttons ───────────────────────────────────────────────────
-        if (_patch_info_fetcher &&
-            _patch_info_fetcher->get_status() ==
-                    PatchInfoFetcher::Status::Found)
-        {
-            if (ImGui::Button("Install game and patch###installgame"))
-                start_download_package();
-        }
-        else
-        {
-            if (ImGui::Button("Install game###installgame"))
-                start_download_package();
-        }
-        ImGui::SetItemDefaultFocus();
-        if (ImGui::IsItemFocused())
-            ImGui::SetScrollY(0.0f);
-
-        if (_base_comppack)
-        {
-            ImGui::SameLine();
-            if (!_downloader->is_in_queue(CompPackBase, _item->titleid))
-            {
-                if (ImGui::Button(
-                            "Install base compat pack###installbasecomppack"))
-                    start_download_comppack(false);
-            }
-            else
-            {
-                if (ImGui::Button(
-                            "Cancel base compat pack###installbasecomppack"))
-                    cancel_download_comppacks(false);
-            }
-        }
-        if (_patch_comppack)
-        {
-            ImGui::SameLine();
-            if (!_downloader->is_in_queue(CompPackPatch, _item->titleid))
-            {
-                if (ImGui::Button(fmt::format(
-                                          "Install patch compat {}###installpatchcommppack",
-                                          _patch_comppack->app_version)
-                                          .c_str()))
-                    start_download_comppack(true);
-            }
-            else
-            {
-                if (ImGui::Button(
-                            "Cancel patch compat###installpatchcommppack"))
-                    cancel_download_comppacks(true);
-            }
-        }
     }
     else
     {
@@ -452,19 +406,6 @@ void GameView::render()
             ImGui::Text("- LiveArea PBP queue: available");
         else
             ImGui::Text("- LiveArea PBP queue: unavailable without plugin");
-        ImGui::Spacing();
-
-        if (ImGui::Button("Install as ISO###installpspiso"))
-            start_download_package(PspInstallMode::Iso);
-        ImGui::SetItemDefaultFocus();
-        if (ImGui::IsItemFocused())
-            ImGui::SetScrollY(0.0f);
-
-        if (_nopspemudrm_present)
-        {
-            if (ImGui::Button("Queue as PBP in LiveArea###installpsppbp"))
-                start_download_package(PspInstallMode::LiveAreaPbp);
-        }
     }
 
     ImGui::PopTextWrapPos();
@@ -472,9 +413,75 @@ void GameView::render()
 
     // ── Hint bar ─────────────────────────────────────────────────────────────
     ImGui::Spacing();
-    draw_button_hint(pkgi_cancel_button(), "Close");
+    draw_button_hint(
+            pkgi_ok_button(),
+            is_vita_mode() ? "Install" : "Install ISO",
+            true);
+
+    if (is_vita_mode())
+    {
+        if (_base_comppack)
+        {
+            same_line_hint_gap();
+            draw_button_hint(
+                    PKGI_BUTTON_T,
+                    _downloader->is_in_queue(CompPackBase, _item->titleid)
+                            ? "Cancel Base CP"
+                            : "Install Base CP",
+                    false);
+        }
+
+        if (_patch_comppack)
+        {
+            same_line_hint_gap();
+            draw_button_hint(
+                    PKGI_BUTTON_S,
+                    _downloader->is_in_queue(CompPackPatch, _item->titleid)
+                            ? "Cancel Patch CP"
+                            : "Install Patch CP",
+                    false);
+        }
+    }
+    else if (_nopspemudrm_present)
+    {
+        same_line_hint_gap();
+        draw_button_hint(PKGI_BUTTON_T, "LiveArea PBP", false);
+    }
+
+    same_line_hint_gap();
+    draw_button_hint(pkgi_cancel_button(), "Close", false);
 
     ImGui::End();
+}
+
+void GameView::update(const pkgi_input& input)
+{
+    if (input.pressed & pkgi_ok_button())
+    {
+        start_download_package(
+                is_vita_mode() ? PspInstallMode::Auto : PspInstallMode::Iso);
+        return;
+    }
+
+    if (input.pressed & PKGI_BUTTON_T)
+    {
+        if (is_vita_mode())
+        {
+            if (_base_comppack)
+                toggle_comppack(false);
+        }
+        else if (_nopspemudrm_present)
+        {
+            start_download_package(PspInstallMode::LiveAreaPbp);
+        }
+        return;
+    }
+
+    if (is_vita_mode() && _patch_comppack &&
+            (input.pressed & PKGI_BUTTON_S))
+    {
+        toggle_comppack(true);
+    }
 }
 
 bool GameView::handle_cancel()
@@ -631,6 +638,15 @@ void GameView::cancel_download_package()
 {
     _downloader->remove_from_queue(Game, _item->content);
     _item->presence = PresenceUnknown;
+}
+
+void GameView::toggle_comppack(bool patch)
+{
+    const auto type = patch ? CompPackPatch : CompPackBase;
+    if (_downloader->is_in_queue(type, _item->titleid))
+        cancel_download_comppacks(patch);
+    else
+        start_download_comppack(patch);
 }
 
 void GameView::start_download_comppack(bool patch)

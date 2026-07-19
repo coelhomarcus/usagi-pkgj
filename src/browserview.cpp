@@ -276,14 +276,19 @@ void BrowseView::render() const
     pkgi_draw_rect(
             0, list_bot, VITA_WIDTH, PKGI_MAIN_HLINE_HEIGHT, PKGI_COLOR_HLINE);
 
-    const HintSegment hint[] = {
+    const HintSegment root_hint[] = {
+        { pkgi_button_str(pkgi_ok_button()), pkgi_button_color(pkgi_ok_button()) },
+        { " Select", PKGI_COLOR_TEXT_TAIL },
+    };
+    const HintSegment child_hint[] = {
         { pkgi_button_str(pkgi_ok_button()), pkgi_button_color(pkgi_ok_button()) },
         { " Select  ", PKGI_COLOR_TEXT_TAIL },
         { pkgi_button_str(pkgi_cancel_button()), pkgi_button_color(pkgi_cancel_button()) },
         { " Back", PKGI_COLOR_TEXT_TAIL },
     };
-    draw_hint_segments_centered(
-            list_bot + PKGI_MAIN_HLINE_HEIGHT,
-            hint,
-            PKGI_COUNTOF(hint));
+
+    const HintSegment* hint = _stack.empty() ? root_hint : child_hint;
+    const size_t hint_count =
+            _stack.empty() ? PKGI_COUNTOF(root_hint) : PKGI_COUNTOF(child_hint);
+    draw_hint_segments_centered(list_bot + PKGI_MAIN_HLINE_HEIGHT, hint, hint_count);
 }

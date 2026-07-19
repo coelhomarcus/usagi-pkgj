@@ -1042,15 +1042,24 @@ void pkgi_do_tail(Downloader& downloader)
     if (download_size == 0)
         download_size = 1;
 
-    pkgi_draw_rect(
-            0,
-            bottom_y + PKGI_MAIN_HLINE_HEIGHT,
-            VITA_WIDTH * download_offset / download_size,
-            font_height + PKGI_MAIN_ROW_PADDING - 1,
-            PKGI_COLOR_PROGRESS_BACKGROUND);
-
     if (current_download)
     {
+        const int progress_height = font_height + PKGI_MAIN_ROW_PADDING - 1;
+        const int progress_width =
+                VITA_WIDTH * download_offset / download_size;
+        pkgi_draw_rect(
+                0,
+                bottom_y + PKGI_MAIN_HLINE_HEIGHT,
+                VITA_WIDTH,
+                progress_height,
+                PKGI_COLOR_PROGRESS_BACKGROUND);
+        pkgi_draw_rect(
+                0,
+                bottom_y + PKGI_MAIN_HLINE_HEIGHT,
+                progress_width,
+                progress_height,
+                PKGI_COLOR_PROGRESS_BAR);
+
         const auto speed = get_speed(download_offset);
         std::string sspeed;
 
@@ -1073,11 +1082,13 @@ void pkgi_do_tail(Downloader& downloader)
     else
         pkgi_snprintf(text, sizeof(text), "Idle");
 
-    pkgi_draw_text(0, bottom_y, PKGI_COLOR_TEXT_TAIL, text);
+    const uint32_t tail_status_color =
+            current_download ? PKGI_COLOR_TEXT_DOWNLOAD : PKGI_COLOR_TEXT_TAIL;
+    pkgi_draw_text(0, bottom_y, tail_status_color, text);
     if (mode == ModeDlcs) 
     {
         pkgi_snprintf(text, sizeof(text), "Selected items: %d/%d", selected_items.size(), 32 - pkgi_list_dir_contents("ux0:bgdl/t").size());
-        pkgi_draw_text((VITA_WIDTH - pkgi_text_width(text)) / 2, bottom_y, PKGI_COLOR_TEXT_TAIL, text);
+        pkgi_draw_text((VITA_WIDTH - pkgi_text_width(text)) / 2, bottom_y, tail_status_color, text);
     }
     const auto second_line = bottom_y + font_height + PKGI_MAIN_ROW_PADDING;
 
@@ -1165,8 +1176,10 @@ void pkgi_do_tail(Downloader& downloader)
         if (mode == ModeDlcs)
         {
             append_button_segment(bottom_segments, PKGI_BUTTON_S);
-            append_text_segment(bottom_segments, " select");
+            append_text_segment(bottom_segments, " select ");
         }
+        append_button_segment(bottom_segments, pkgi_cancel_button());
+        append_text_segment(bottom_segments, " home");
     }
 
     pkgi_clip_set(
@@ -1736,7 +1749,7 @@ int main()
             io.DisplaySize.x = VITA_WIDTH;
             io.DisplaySize.y = VITA_HEIGHT;
 
-            // Snapshot for log viewer (needs raw input BEFORE zeroing)
+            // Snapshot for overlays that need raw input before it is consumed.
             const pkgi_input input_snapshot = input;
 
             const bool has_imgui_overlay =
@@ -1765,6 +1778,12 @@ int main()
                 }
 
                 // Universal cancel / save handlers (read pressed before zeroing)
+                if (gameview && !pkgi_dialog_is_open() &&
+                        !(input.pressed & pkgi_cancel_button()))
+                {
+                    gameview->update(input_snapshot);
+                }
+
                 if (input.pressed & pkgi_cancel_button())
                 {
                     if (gameview)
