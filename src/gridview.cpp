@@ -456,23 +456,25 @@ GridResult pkgi_do_main_grid(
     return result;
 }
 
+// TEMPORARY DIAGNOSTIC: deactivation no longer frees any grid textures at
+// all (not even staggered — see the clear_incremental attempt this
+// replaced). Vita3K keeps crashing inside VKTextureCache::upload_texture_impl
+// on deactivate even with textures freed 1-2 at a time across several
+// frames, which rules out "freeing too many textures in one frame" as the
+// cause. This build intentionally leaks the cached ImageFetchers/textures
+// on deactivate instead of freeing them, to test whether the crash is tied
+// to the free/destroy call itself regardless of batching or timing. If
+// this build does NOT crash, that confirms it and points at a proper fix
+// (e.g. never destroying textures mid-session, only reusing a fixed pool);
+// if it STILL crashes, the cause is unrelated to texture destruction.
+// selected_item/first_item still leave the grid normally either way; only
+// GridImageCache's contents are affected. NOT a real fix — this leaks
+// VRAM for the rest of the session every time grid view is toggled off.
 void pkgi_grid_deactivate()
 {
-    g_deactivating = true;
+    (void)g_deactivating; // unused while this diagnostic is in place
 }
 
-// Called every frame regardless of whether the grid is the active
-// renderer, to pump any pending post-deactivation texture cleanup.
-//
-// Freeing several vita2d textures in the same frame (e.g. the whole
-// GridImageCache at once, up to kCellsPerPage of them) has been observed
-// to crash on Vita3K inside its Vulkan texture upload path — plausibly a
-// GPU-sync timing gap in the emulator that a single ImageFetcher freeing
-// its one texture (GameView's pre-grid usage pattern) never exercised.
-// Spreading the clear over a few frames, a couple of textures at a time,
-// is a mitigation for that, not a confirmed root-cause fix.
 void pkgi_grid_tick()
 {
-    if (g_deactivating)
-        g_deactivating = !g_image_cache.clear_incremental(2);
 }
