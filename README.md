@@ -33,11 +33,11 @@ Press left or right button to move page up or down.
 
 ## Cover art
 
-The PS Vita games list can be browsed as a grid of cover art instead of the plain text list — toggle **"Grid view (games)"** in the triangle options menu.
+The PS Vita, PSP and PSX games lists are browsed as a grid of cover art by default instead of the plain text list — toggle **"Grid view (games)"** in the triangle options menu to switch back.
 
 Covers are fetched on demand, one at a time, and cached locally so they only need to download once:
 
-1. By default, vertical box art from the [HexFlow-Covers][hexflow_covers] project is tried first.
+1. By default, box art from the [HexFlow-Covers][hexflow_covers] project is tried first (vertical for PS Vita/PSP, square for PSX).
 2. If a title isn't in that set, it falls back to the cover from the PlayStation Store.
 
 # Configuration
@@ -58,7 +58,7 @@ Usagi PKGj is shipped with valid default URLs. If you wish to change some settin
 | `install_psp_as_pbp 1` | Install PSP games as EBOOT.EBP files instead of ISO files (see Q&A) |
 | `install_psp_psx_location uma0:` | Install PSP and PSX games on `uma0:` |
 | `no_version_check 1` | Do not check for update when starting Usagi PKGj |
-| `grid_view 1` | Show the PS Vita games list as a cover-art grid instead of the plain-text list |
+| `grid_view 0` | Show the games list as a plain text list instead of the cover-art grid (grid is the default) |
 | `thumbnail_url <URL>` | Use a custom cover source (`{thumbnail_url}/{titleid}.jpg`) instead of the default HexFlow/PS Store lookup |
 | `thumbnail_folder <path>` | Local folder covers are cached in (default: `ux0:usagi-pkgj/cover`) |
 
@@ -121,7 +121,7 @@ UDP multicast address 239.255.0.100:30000. To receive them you can use [socat][]
 # Publishing a release (for maintainers)
 
 Pushing a tag in the form `v0.56` will create a new release and build
-`usagi-pkgj.vpk`.
+`UsagiPKGJ.vpk`.
 
 If you want to build a beta, you can push a tag in the form `v0.56-beta1` which
 will create a pre-release. Such a release will not be picked up by the auto

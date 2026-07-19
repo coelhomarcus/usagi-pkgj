@@ -30,12 +30,31 @@ static vita2d_texture* sim_load_image_file(const char* path)
 
 namespace
 {
-// Default cover source: vertical PS Vita box art curated by the HexFlow
-// project (https://github.com/Andiweli/HexFlow-Covers), served from this
-// fork's own mirror (https://github.com/coelhomarcus/HexFlow-Covers).
-// Titles missing from this set fall back to the PlayStation Store below.
-constexpr const char* kDefaultCoverBaseUrl =
+// Default cover source: box art curated by the HexFlow project
+// (https://github.com/Andiweli/HexFlow-Covers), served from this fork's own
+// mirror (https://github.com/coelhomarcus/HexFlow-Covers). One folder per
+// content type — PS Vita and PSP covers are vertical box art, PSX covers
+// are square. Titles missing from their set fall back to the PlayStation
+// Store below.
+constexpr const char* kCoverBaseUrlVita =
         "https://raw.githubusercontent.com/coelhomarcus/HexFlow-Covers/main/Covers/PSVita";
+constexpr const char* kCoverBaseUrlPsp =
+        "https://raw.githubusercontent.com/coelhomarcus/HexFlow-Covers/main/Covers/PSP";
+constexpr const char* kCoverBaseUrlPsx =
+        "https://raw.githubusercontent.com/coelhomarcus/HexFlow-Covers/main/Covers/PS1";
+
+const char* cover_base_url_for_mode(Mode mode)
+{
+    switch (mode)
+    {
+    case ModePspGames:
+        return kCoverBaseUrlPsp;
+    case ModePsxGames:
+        return kCoverBaseUrlPsx;
+    default:
+        return kCoverBaseUrlVita;
+    }
+}
 
 std::string get_store_image_url(DbItem* item)
 {
@@ -111,7 +130,7 @@ vita2d_texture* decode_png_from_memory(const std::vector<uint8_t>& data)
 }
 
 std::vector<ImageFetcher::Source> ImageFetcher::_build_sources(
-        const Config* config, DbItem* item)
+        const Config* config, DbItem* item, Mode mode)
 {
     const std::string folder = config && !config->thumbnail_folder.empty()
             ? config->thumbnail_folder
@@ -128,17 +147,19 @@ std::vector<ImageFetcher::Source> ImageFetcher::_build_sources(
     }
 
     return {
-            // 1) HexFlow-Covers vertical box art (PNG) — default source.
+            // 1) HexFlow-Covers box art (PNG) — default source.
             {fmt::format("{}/{}.png", folder, item->titleid),
-             fmt::format("{}/{}.png", kDefaultCoverBaseUrl, item->titleid)},
+             fmt::format("{}/{}.png",
+                         cover_base_url_for_mode(mode),
+                         item->titleid)},
             // 2) PlayStation Store (JPEG) — fallback for titles HexFlow lacks.
             {fmt::format("{}/{}.cover.jpg", folder, item->titleid),
              get_store_image_url(item)},
     };
 }
 
-ImageFetcher::ImageFetcher(const Config* config, DbItem* item)
-    : _sources(_build_sources(config, item))
+ImageFetcher::ImageFetcher(const Config* config, DbItem* item, Mode mode)
+    : _sources(_build_sources(config, item, mode))
 {
     ensure_image_folder(config);
     // Download is NOT started here.  get_status() / get_texture() drive

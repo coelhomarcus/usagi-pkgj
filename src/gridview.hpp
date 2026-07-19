@@ -18,9 +18,11 @@ struct GridResult
     bool open_menu_requested = false;
 };
 
-// Draws and drives input for the ModeGames cover-art grid view: an
-// alternative to pkgi_do_main's plain-text list. Only ever called for
-// ModeGames.
+// Draws and drives input for the cover-art grid view: an alternative to
+// pkgi_do_main's plain-text list. Supported for ModeGames, ModePspGames and
+// ModePsxGames — mode picks both the HexFlow cover folder (ImageFetcher)
+// and the placeholder art (pkgi_get_cover_placeholder), since PS Vita/PSP
+// covers are vertical and PSX covers are square.
 //
 // first_item / selected_item are the SAME state pkgi_do_main uses, passed
 // by reference, so toggling between list and grid mid-session keeps the
@@ -36,7 +38,8 @@ GridResult pkgi_do_main_grid(
         uint32_t& first_item,
         uint32_t& selected_item,
         int font_height,
-        int avail_height);
+        int avail_height,
+        Mode mode);
 
 // Retires every cached cover texture — actual destruction happens later,
 // gradually, via pkgi_grid_tick (see GridImageCache's class comment in

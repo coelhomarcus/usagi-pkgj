@@ -31,10 +31,11 @@ struct ImageFetchResult
 // Fetches a game's cover image, trying an ordered list of sources and
 // falling back to the next one on a 404/failure.
 //
-// Default (no config->thumbnail_url): tries the HexFlow-Covers vertical
-// box-art PNG first, then falls back to the PlayStation Store JPEG if the
-// title isn't in that set. If config->thumbnail_url is set, it is the only
-// source tried (matches the documented "custom cover source" override).
+// Default (no config->thumbnail_url): tries the HexFlow-Covers box-art PNG
+// first (folder picked from `mode` — PS Vita/PSP are vertical, PSX is
+// square), then falls back to the PlayStation Store JPEG if the title isn't
+// in that set. If config->thumbnail_url is set, it is the only source tried
+// (matches the documented "custom cover source" override).
 class ImageFetcher
 {
 public:
@@ -50,7 +51,7 @@ public:
         Error,
     };
 
-    ImageFetcher(const Config* config, DbItem* item);
+    ImageFetcher(const Config* config, DbItem* item, Mode mode = ModeGames);
     ~ImageFetcher();
 
     // Must be called from the MAIN thread every frame.
@@ -66,7 +67,8 @@ private:
     };
     // Priority order: index 0 tried first, later entries are fallbacks.
     std::vector<Source> _sources;
-    static std::vector<Source> _build_sources(const Config* config, DbItem* item);
+    static std::vector<Source> _build_sources(
+            const Config* config, DbItem* item, Mode mode);
 
     bool   _submitted{false};       // true once the slot accepted the task
     Status _status{Status::Pending};

@@ -17,6 +17,8 @@ vita2d_texture* pkgi_get_region_flag(GameRegion region)
             pkgi_load_png(flags_jpn));
     static vita2d_texture* asa_tex = reinterpret_cast<vita2d_texture*>(
             pkgi_load_png(flags_asa));
+    static vita2d_texture* unk_tex = reinterpret_cast<vita2d_texture*>(
+            pkgi_load_png(flags_unk));
 
     switch (region)
     {
@@ -29,7 +31,7 @@ vita2d_texture* pkgi_get_region_flag(GameRegion region)
     case RegionASA:
         return asa_tex;
     default:
-        return nullptr;
+        return unk_tex;
     }
 #else
     (void)region;

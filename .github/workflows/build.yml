@@ -28,8 +28,8 @@ jobs:
       - name: Upload vita build
         uses: actions/upload-artifact@v4
         with:
-          name: usagi-pkgj.vpk
-          path: ci/build/usagi-pkgj.vpk
+          name: UsagiPKGJ.vpk
+          path: ci/build/UsagiPKGJ.vpk
   publish:
     needs: build
     if: ${{ startsWith(github.event.ref, 'refs/tags/v') }}
@@ -45,10 +45,10 @@ jobs:
           echo -n ${refname:1} > version
       - uses: actions/download-artifact@v4
         with:
-          name: usagi-pkgj.vpk
+          name: UsagiPKGJ.vpk
       - uses: svenstaro/upload-release-action@v2
         with:
-          file: usagi-pkgj.vpk
+          file: UsagiPKGJ.vpk
           release_name: "Usagi PKGj ${{ github.ref_name }}"
           prerelease: ${{ contains(github.ref_name, 'beta') }}
       - name: Prepare new version
@@ -56,9 +56,9 @@ jobs:
           git config --global user.name "GitHub actions"
           git config --global user.email "actions@github.com"
 
-          mv usagi-pkgj.vpk usagi-pkgj-${{ github.ref_name }}.vpk
+          mv UsagiPKGJ.vpk UsagiPKGJ-${{ github.ref_name }}.vpk
           git add -u
-          git add usagi-pkgj-${{ github.ref_name }}.vpk
+          git add UsagiPKGJ-${{ github.ref_name }}.vpk
           git commit -m "Push ${{ github.ref_name }}"
       - name: Upload new version
         if: ${{ !contains(github.ref_name, 'beta') }}

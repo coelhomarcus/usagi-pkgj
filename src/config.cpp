@@ -438,9 +438,9 @@ void pkgi_save_config(const Config& config)
             sizeof(data) - len,
             "thumbnail_size %d\n",
             config.thumbnail_size);
-    if (config.grid_view)
+    if (!config.grid_view)
         len += pkgi_snprintf(
-                data + len, sizeof(data) - len, "grid_view 1\n");
+                data + len, sizeof(data) - len, "grid_view 0\n");
     if (!config.install_psp_psx_location.empty())
         len += pkgi_snprintf(
                 data + len,

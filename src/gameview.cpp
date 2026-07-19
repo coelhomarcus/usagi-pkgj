@@ -126,7 +126,7 @@ GameView::GameView(
     , _item(item)
     , _base_comppack(base_comppack)
     , _patch_comppack(patch_comppack)
-    , _image_fetcher(config, item)
+    , _image_fetcher(config, item, mode)
 {
     if (is_vita_mode())
     {

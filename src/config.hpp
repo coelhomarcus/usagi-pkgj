@@ -45,9 +45,10 @@ typedef struct Config
     int thumbnail_size{2};
 
     // Display settings
-    // grid_view : when true, ModeGames renders as a cover-art grid instead
-    //             of the plain-text list. Other modes always use the list.
-    bool grid_view{false};
+    // grid_view : when true (the default), ModeGames/ModePspGames/
+    //             ModePsxGames render as a cover-art grid instead of the
+    //             plain-text list. Other modes always use the list.
+    bool grid_view{true};
 
     std::array<CustomConfigEntry, 5> custom_entries;
 } Config;

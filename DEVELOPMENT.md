@@ -267,7 +267,7 @@ Output files in `ci/build/`:
 | File | Description |
 |------|-------------|
 | `eboot.bin` | Signed SELF — the actual executable loaded by the Vita |
-| `usagi-pkgj.vpk` | Full installable package (includes `eboot.bin` + Live Area assets) |
+| `UsagiPKGJ.vpk` | Full installable package (includes `eboot.bin` + Live Area assets) |
 | `pkgj.elf` | Unsigned ELF — useful for debugging with `gdb` or disassembly |
 
 ### Install on Vita via FTP
@@ -285,7 +285,7 @@ PSVITAIP=192.168.1.x cmake --build . --target send
 
 ### GitHub Actions
 
-`.github/workflows/build.yml` runs on every push: builds `pkgj_cli` and `usagi-pkgj.vpk` on a native x86_64 Ubuntu runner and uploads both as workflow artifacts (Actions tab → the run → **Artifacts**). `.github/workflows/release.yml` publishes `usagi-pkgj.vpk` as a GitHub release when a version tag is pushed. Actions is disabled by default on forks — enable it once under the repo's Actions tab before pushing.
+`.github/workflows/build.yml` runs on every push: builds `pkgj_cli` and `UsagiPKGJ.vpk` on a native x86_64 Ubuntu runner and uploads both as workflow artifacts (Actions tab → the run → **Artifacts**). `.github/workflows/release.yml` publishes `UsagiPKGJ.vpk` as a GitHub release when a version tag is pushed. Actions is disabled by default on forks — enable it once under the repo's Actions tab before pushing.
 
 ---
 
@@ -295,9 +295,9 @@ Non-exhaustive list of what differs from [blastrock/pkgj](https://github.com/bla
 
 | Area | Files | Description |
 |------|-------|-------------|
-| Grid view | `src/gridview.{hpp,cpp}` (new) | Cover-art grid rendering, input, and per-visible-cell texture cache (`GridImageCache`) for `ModeGames` |
-| Cover fetching | `src/imagefetcher.{hpp,cpp}` | Reworked to try an ordered list of sources per title (HexFlow PNG → PS Store JPEG fallback) instead of a single URL; PNG decode goes through `vita2d_load_PNG_buffer` |
-| Cover assets | `assets/covers/noimage.png`, `assets/covers/loading.png` | Grid cell placeholder art, embedded like other bundled UI assets |
+| Grid view | `src/gridview.{hpp,cpp}` (new) | Cover-art grid rendering, input, and per-visible-cell texture cache (`GridImageCache`) for `ModeGames`/`ModePspGames`/`ModePsxGames`, default-on |
+| Cover fetching | `src/imagefetcher.{hpp,cpp}` | Reworked to try an ordered list of sources per title (HexFlow PNG → PS Store JPEG fallback) instead of a single URL, mode-aware HexFlow folder (PSVita/PSP/PS1); PNG decode goes through `vita2d_load_PNG_buffer` |
+| Cover/flag assets | `assets/covers/*.png`, `assets/flags/*.png` | Grid/GameView placeholder art per content type (Vita/PSP vertical, PSX square) and region flag badges, embedded like other bundled UI assets |
 | Config | `src/config.{hpp,cpp}` | Added `grid_view` |
 | Menu | `src/menu.{hpp,cpp}` | Added "Grid view (games)" toggle |
 | Main loop | `src/pkgi.{hpp,cpp}` | Dispatches to the grid or list renderer based on `config.grid_view`; alphabetical name-group-jump helpers and the OK/cancel button-label helpers moved out of the file's anonymous namespace so other translation units can call them |

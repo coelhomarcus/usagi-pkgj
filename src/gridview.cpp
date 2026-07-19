@@ -41,7 +41,9 @@ static inline float vita2d_texture_get_height(vita2d_texture* t)
 
 namespace
 {
-// Covers are vertical box art (~250x320, HexFlow-Covers).
+// Cell size is tuned for vertical box art (~250x320 PS Vita, 180x320 PSP,
+// HexFlow-Covers); draw_scaled() fits any other aspect (e.g. PSX's square
+// 256x256) within the same box without distortion.
 constexpr int kCols = 4;
 constexpr int kRows = 2;
 constexpr int kCellsPerPage = kCols * kRows;
@@ -83,7 +85,7 @@ class GridImageCache
     using CacheMap = std::unordered_map<std::string, std::unique_ptr<ImageFetcher>>;
 
 public:
-    void sync(const std::vector<DbItem*>& wanted, const Config& config)
+    void sync(const std::vector<DbItem*>& wanted, const Config& config, Mode mode)
     {
         for (DbItem* item : wanted)
         {
@@ -106,7 +108,7 @@ public:
 
             _cache.emplace(
                     item->titleid,
-                    std::make_unique<ImageFetcher>(&config, item));
+                    std::make_unique<ImageFetcher>(&config, item, mode));
         }
 
         for (auto it = _cache.begin(); it != _cache.end();)
@@ -253,7 +255,8 @@ void draw_cell(
         ImVec2 cell_min,
         float cell_w,
         float cell_h,
-        bool selected)
+        bool selected,
+        Mode mode)
 {
     const float title_h = ImGui::GetTextLineHeightWithSpacing();
     const ImVec2 cov_min = cell_min;
@@ -276,7 +279,7 @@ void draw_cell(
                 status == ImageFetcher::Status::Downloading ||
                 status == ImageFetcher::Status::Pending;
 
-        vita2d_texture* placeholder = pkgi_get_cover_placeholder(is_loading);
+        vita2d_texture* placeholder = pkgi_get_cover_placeholder(is_loading, mode);
         if (placeholder)
         {
             draw_scaled(dl, placeholder, cov_min, box_w, box_h);
@@ -342,7 +345,8 @@ GridResult pkgi_do_main_grid(
         uint32_t& first_item,
         uint32_t& selected_item,
         int font_height,
-        int avail_height)
+        int avail_height,
+        Mode mode)
 {
     GridResult result;
 
@@ -501,7 +505,7 @@ GridResult pkgi_do_main_grid(
                 break;
             wanted.push_back(db.get(idx));
         }
-        g_image_cache.sync(wanted, config);
+        g_image_cache.sync(wanted, config, mode);
 
         for (int slot = 0; slot < kCellsPerPage; ++slot)
         {
@@ -521,7 +525,8 @@ GridResult pkgi_do_main_grid(
                     cell_min,
                     cell_w,
                     cell_h,
-                    idx == selected_item);
+                    idx == selected_item,
+                    mode);
         }
     }
 

@@ -278,6 +278,13 @@ const char* pkgi_get_mode_partition()
                    : "ux0:";
 }
 
+// Modes the cover-art grid view (pkgi_do_main_grid) supports — everything
+// else always uses the plain-text list regardless of config.grid_view.
+bool pkgi_grid_supported_mode(Mode m)
+{
+    return m == ModeGames || m == ModePspGames || m == ModePsxGames;
+}
+
 void pkgi_refresh_installed_packages()
 {
     auto games = pkgi_get_installed_games();
@@ -1709,7 +1716,7 @@ int main()
             // use-after-free that crashes on cancel out of the grid.
             {
                 const bool grid_active_now = state == StateMain &&
-                        config.grid_view && mode == ModeGames;
+                        config.grid_view && pkgi_grid_supported_mode(mode);
                 if (!grid_active_now && grid_active_last_frame)
                     pkgi_grid_deactivate();
                 grid_active_last_frame = grid_active_now;
@@ -1744,7 +1751,7 @@ int main()
                 pkgi_input* main_input =
                         pkgi_dialog_is_open() || pkgi_menu_is_open() ? NULL
                                                                       : &input;
-                if (config.grid_view && mode == ModeGames)
+                if (config.grid_view && pkgi_grid_supported_mode(mode))
                 {
                     GridResult gr = pkgi_do_main_grid(
                             *db,
@@ -1753,7 +1760,8 @@ int main()
                             first_item,
                             selected_item,
                             font_height,
-                            avail_height);
+                            avail_height,
+                            mode);
                     if (gr.item_activated)
                         pkgi_open_gameview_for_selected(downloader);
                     if (gr.open_menu_requested)

@@ -18,7 +18,9 @@ struct vita2d_texture;
 // ASA-region Vita releases. Loaded once (embedded asset, see cross.cmake's
 // add_assets) and cached for the process lifetime.
 //
-// Returns null for RegionINT/RegionUnknown (no single flag represents them —
-// callers should keep the "INT"/"???" text fallback) and null in the
-// simulator, which has no asset-embedding step.
+// RegionINT/RegionUnknown get a generic "unknown" (assets/flags/unk.png)
+// badge instead, since no single flag represents them.
+//
+// Returns null in the simulator, which has no asset-embedding step —
+// callers should fall back to a plain rect+text placeholder in that case.
 vita2d_texture* pkgi_get_region_flag(GameRegion region);
