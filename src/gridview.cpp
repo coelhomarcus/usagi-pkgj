@@ -70,6 +70,19 @@ constexpr ImU32 kInstalledCol   = IM_COL32(50, 50, 255, 255);
 int g_tex_uploads_this_frame = 0;
 constexpr int kMaxTexUploadsPerFrame = 2;
 
+// input->active auto-repeats a held direction at a flat 60Hz once past its
+// own ~166ms initial delay (see pkgi_update() in vita.cpp/sdl_backend.cpp)
+// — fine for the list view, where a repeat just moves one text row, but
+// each grid row-jump can bring a whole new page (kCellsPerPage titles) into
+// view, each spawning a download/decode. Unthrottled, holding a direction
+// for ~20s was enough to keep the download/decode pipeline continuously
+// swamped and the app stopped responding. This limits actual moves to once
+// every kRepeatFramesPerStep frames while a direction is held — independent
+// of, and in addition to, pkgi_update()'s own repeat delay — regardless of
+// how long the button has been down.
+uint32_t g_repeat_hold_frames = 0;
+constexpr uint32_t kRepeatFramesPerStep = 6; // ~10 moves/sec at 60fps
+
 // ── Per-cell cover download/decode coordination ─────────────────────────────
 // Keyed by titleid (never by DbItem*: TitleDatabase::reload() invalidates
 // every DbItem pointer, but titleids of surviving items stay valid).
@@ -389,7 +402,24 @@ GridResult pkgi_do_main_grid(
 
     if (input && db_count != 0)
     {
-        if (input->active & PKGI_BUTTON_UP)
+        constexpr uint32_t kDirMask = PKGI_BUTTON_UP | PKGI_BUTTON_DOWN |
+                PKGI_BUTTON_LEFT | PKGI_BUTTON_RIGHT;
+        const bool dir_active = (input->active & kDirMask) != 0;
+
+        if (!dir_active)
+            g_repeat_hold_frames = 0;
+
+        // Always true on the first active frame of a hold (frame count is
+        // freshly 0, and 0 % N == 0) — a tap or the first repeat after the
+        // initial delay both move immediately, matching normal hold-repeat
+        // feel. Subsequent frames while still held only move once every
+        // kRepeatFramesPerStep frames.
+        const bool allow_move =
+                dir_active && (g_repeat_hold_frames % kRepeatFramesPerStep) == 0;
+        if (dir_active)
+            ++g_repeat_hold_frames;
+
+        if (allow_move && (input->active & PKGI_BUTTON_UP))
         {
             if (selected_item >= static_cast<uint32_t>(kCols))
             {
@@ -406,7 +436,7 @@ GridResult pkgi_do_main_grid(
             reclamp_window();
         }
 
-        if (input->active & PKGI_BUTTON_DOWN)
+        if (allow_move && (input->active & PKGI_BUTTON_DOWN))
         {
             if (selected_item + kCols < db_count)
             {
@@ -420,14 +450,14 @@ GridResult pkgi_do_main_grid(
             reclamp_window();
         }
 
-        if (input->active & PKGI_BUTTON_LEFT)
+        if (allow_move && (input->active & PKGI_BUTTON_LEFT))
         {
             selected_item = (selected_item == 0) ? db_count - 1
                                                   : selected_item - 1;
             reclamp_window();
         }
 
-        if (input->active & PKGI_BUTTON_RIGHT)
+        if (allow_move && (input->active & PKGI_BUTTON_RIGHT))
         {
             selected_item =
                     (selected_item + 1 >= db_count) ? 0 : selected_item + 1;
