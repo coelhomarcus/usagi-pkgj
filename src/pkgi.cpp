@@ -16,6 +16,7 @@ extern "C"
 #include "downloader.hpp"
 #include "gameview.hpp"
 #include "gridview.hpp"
+#include "coversyncview.hpp"
 #include "imgui.hpp"
 #include "install.hpp"
 #include "logviewer.hpp"
@@ -97,6 +98,7 @@ std::set<std::string> installed_themes;
 std::unique_ptr<GameView> gameview;
 std::unique_ptr<ConfigEditor> config_editor;
 std::unique_ptr<LogViewer> log_viewer;
+std::unique_ptr<CoverSyncView> cover_sync_view;
 std::unique_ptr<BrowseView> browse_view;
 std::unique_ptr<AnnotationDatabase> annotation_db;
 bool need_refresh = true;
@@ -106,17 +108,7 @@ void pkgi_reload();
 
 bool pkgi_overlay_is_open()
 {
-    return gameview || config_editor || log_viewer;
-}
-
-const char* pkgi_get_ok_str(void)
-{
-    return pkgi_ok_button() == PKGI_BUTTON_X ? PKGI_UTF8_X : PKGI_UTF8_O;
-}
-
-const char* pkgi_get_cancel_str(void)
-{
-    return pkgi_cancel_button() == PKGI_BUTTON_O ? PKGI_UTF8_O : PKGI_UTF8_X;
+    return gameview || config_editor || log_viewer || cover_sync_view;
 }
 
 Type mode_to_type(Mode mode)
@@ -1247,13 +1239,23 @@ void pkgi_open_db()
 }
 }
 
+// Deliberately defined OUTSIDE the anonymous namespace above: other
+// translation units (gridview.cpp, coversyncview.cpp) call these (declared
+// in pkgi.hpp), and anonymous-namespace members have internal linkage even
+// without `static`, so they'd be invisible to other TUs from inside it.
+const char* pkgi_get_ok_str(void)
+{
+    return pkgi_ok_button() == PKGI_BUTTON_X ? PKGI_UTF8_X : PKGI_UTF8_O;
+}
+
+const char* pkgi_get_cancel_str(void)
+{
+    return pkgi_cancel_button() == PKGI_BUTTON_O ? PKGI_UTF8_O : PKGI_UTF8_X;
+}
+
 // ── Alphabetical name-group jump (LT/RT) ────────────────────────────────────
-// Deliberately defined OUTSIDE the anonymous namespace above: gridview.cpp
-// calls these (declared in pkgi.hpp) to reuse the exact same grouping the
-// list view uses, and anonymous-namespace members have internal linkage
-// even without `static`, so they'd be invisible to other translation units
-// from inside it. db/pkgi_time_msec/pkgi_draw_rect/etc. stay reachable here
-// via the implicit using-directive the anonymous namespace injects.
+// db/pkgi_time_msec/pkgi_draw_rect/etc. stay reachable here via the implicit
+// using-directive the anonymous namespace injects.
 static bool pkgi_utf8_next_codepoint(
         const std::string& text,
         size_t& pos,
@@ -1680,7 +1682,7 @@ int main()
             const bool has_imgui_overlay =
                     gameview || config_editor || pkgi_dialog_is_open();
 
-            if (has_imgui_overlay || log_viewer)
+            if (has_imgui_overlay || log_viewer || cover_sync_view)
             {
                 // Feed D-pad to ImGui only for ImGui-managed overlays
                 if (has_imgui_overlay)
@@ -1865,6 +1867,14 @@ int main()
                     log_viewer->render(input_snapshot);
             }
 
+            if (cover_sync_view)
+            {
+                if (cover_sync_view->is_closed())
+                    cover_sync_view = nullptr;
+                else
+                    cover_sync_view->render(input_snapshot);
+            }
+
             if (pkgi_dialog_is_open())
             {
                 pkgi_do_dialog();
@@ -1963,6 +1973,17 @@ int main()
                         break;
                     case MenuResultOpenLogViewer:
                         log_viewer = std::make_unique<LogViewer>();
+                        break;
+                    case MenuResultSyncCovers:
+                        if (mode == ModeGames && db)
+                        {
+                            std::vector<DbItem*> items;
+                            items.reserve(db->count());
+                            for (uint32_t i = 0; i < db->count(); ++i)
+                                items.push_back(db->get(i));
+                            cover_sync_view = std::make_unique<CoverSyncView>(
+                                    &config, std::move(items));
+                        }
                         break;
                     }
                 }

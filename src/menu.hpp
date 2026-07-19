@@ -22,6 +22,7 @@ typedef enum
     MenuResultShowPsmGames,
     MenuResultOpenConfigEditor,
     MenuResultOpenLogViewer,
+    MenuResultSyncCovers,
 } MenuResult;
 
 typedef struct Config Config;

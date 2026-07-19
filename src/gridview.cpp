@@ -37,12 +37,15 @@ static inline float vita2d_texture_get_height(vita2d_texture* t)
 
 namespace
 {
-constexpr int kCols = 4;
-constexpr int kRows = 3;
+// Covers are vertical box art (~250x320, HexFlow-Covers) — fewer columns
+// and fewer rows than a square-cover grid so each one gets a much bigger,
+// more legible box instead of being squeezed into a near-square cell.
+constexpr int kCols = 3;
+constexpr int kRows = 2;
 constexpr int kCellsPerPage = kCols * kRows;
 
 constexpr float kMargin = 8.f;
-constexpr float kGap = 10.f;
+constexpr float kGap = 12.f;
 
 constexpr ImU32 kSelBorderCol   = IM_COL32(90, 160, 255, 220);
 constexpr ImU32 kCellBgCol      = IM_COL32(18, 22, 40, 220);

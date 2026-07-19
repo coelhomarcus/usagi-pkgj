@@ -32,8 +32,11 @@ typedef struct Config
 
     // Image panel settings
     // thumbnail_url    : optional base URL for custom images fetched as
-    //                    {thumbnail_url}/{titleid}.jpg.
-    //                    Leave empty to fall back to the default PS Store cover.
+    //                    {thumbnail_url}/{titleid}.jpg. Overrides the
+    //                    default source entirely (no PSN fallback).
+    //                    Leave empty to use the default: vertical box art
+    //                    from the HexFlow-Covers project, falling back to
+    //                    the PS Store cover for titles it doesn't have.
     // thumbnail_folder : local directory where images are stored/cached.
     //                    Leave empty to use the default: ux0:pkgj/cover
     // thumbnail_size   : panel size preset — 0=off, 1=small, 2=medium (default), 3=large

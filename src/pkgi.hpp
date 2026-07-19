@@ -54,6 +54,8 @@ int pkgi_is_unsafe_mode(void);
 
 int pkgi_ok_button(void);
 int pkgi_cancel_button(void);
+const char* pkgi_get_ok_str(void);
+const char* pkgi_get_cancel_str(void);
 
 void pkgi_start(void);
 int pkgi_update(pkgi_input* input);

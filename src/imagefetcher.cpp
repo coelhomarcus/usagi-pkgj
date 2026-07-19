@@ -12,7 +12,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 extern SDL_Renderer* g_sdl_renderer;
-static vita2d_texture* sim_load_jpeg_file(const char* path)
+static vita2d_texture* sim_load_image_file(const char* path)
 {
     SDL_Surface* s = IMG_Load(path);
     if (!s) return nullptr;
@@ -20,7 +20,11 @@ static vita2d_texture* sim_load_jpeg_file(const char* path)
     SDL_FreeSurface(s);
     return reinterpret_cast<vita2d_texture*>(t);
 }
-#define vita2d_load_JPEG_file(p)     sim_load_jpeg_file(p)
+// SDL_image's IMG_Load auto-detects the format from file content, so the
+// same loader backs both macros in the simulator; the real vita2d library
+// has genuinely separate PNG/JPEG decoders on-device.
+#define vita2d_load_JPEG_file(p)     sim_load_image_file(p)
+#define vita2d_load_PNG_file(p)      sim_load_image_file(p)
 #define vita2d_wait_rendering_done() ((void)0)
 #define vita2d_free_texture(t)       SDL_DestroyTexture(reinterpret_cast<SDL_Texture*>(t))
 #endif
@@ -30,10 +34,11 @@ static vita2d_texture* sim_load_jpeg_file(const char* path)
 
 namespace
 {
-bool uses_default_store_source(const Config* config)
-{
-    return !config || config->thumbnail_url.empty();
-}
+// Default cover source: vertical PS Vita box art curated by the HexFlow
+// project (https://github.com/Andiweli/HexFlow-Covers). Titles missing from
+// this set fall back to the PlayStation Store below.
+constexpr const char* kDefaultCoverBaseUrl =
+        "https://raw.githubusercontent.com/Andiweli/HexFlow-Covers/main/Covers/PSVita";
 
 std::string get_store_image_url(DbItem* item)
 {
@@ -80,26 +85,6 @@ std::string get_store_image_url(DbItem* item)
             pkgi_time_msec());
 }
 
-std::string get_image_path(const Config* config, DbItem* item)
-{
-    const std::string folder = config && !config->thumbnail_folder.empty()
-            ? config->thumbnail_folder
-            : "ux0:pkgj/cover";
-
-    if ((!config || config->thumbnail_folder.empty()) &&
-        uses_default_store_source(config))
-        return fmt::format("{}/{}.cover.jpg", folder, item->titleid);
-
-    return fmt::format("{}/{}.jpg", folder, item->titleid);
-}
-
-std::string get_image_url(const Config* config, DbItem* item)
-{
-    if (config && !config->thumbnail_url.empty())
-        return fmt::format("{}/{}.jpg", config->thumbnail_url, item->titleid);
-    return get_store_image_url(item);
-}
-
 void ensure_image_folder(const Config* config)
 {
     const std::string folder = config && !config->thumbnail_folder.empty()
@@ -109,9 +94,35 @@ void ensure_image_folder(const Config* config)
 }
 }
 
+std::vector<ImageFetcher::Source> ImageFetcher::_build_sources(
+        const Config* config, DbItem* item)
+{
+    const std::string folder = config && !config->thumbnail_folder.empty()
+            ? config->thumbnail_folder
+            : "ux0:pkgj/cover";
+
+    // A custom thumbnail_url is an explicit user override — it is the only
+    // source tried, matching the documented behavior (no PSN fallback).
+    if (config && !config->thumbnail_url.empty())
+    {
+        return {
+                {fmt::format("{}/{}.jpg", folder, item->titleid),
+                 fmt::format("{}/{}.jpg", config->thumbnail_url, item->titleid)},
+        };
+    }
+
+    return {
+            // 1) HexFlow-Covers vertical box art (PNG) — default source.
+            {fmt::format("{}/{}.png", folder, item->titleid),
+             fmt::format("{}/{}.png", kDefaultCoverBaseUrl, item->titleid)},
+            // 2) PlayStation Store (JPEG) — fallback for titles HexFlow lacks.
+            {fmt::format("{}/{}.cover.jpg", folder, item->titleid),
+             get_store_image_url(item)},
+    };
+}
+
 ImageFetcher::ImageFetcher(const Config* config, DbItem* item)
-    : _path(get_image_path(config, item))
-    , _url(get_image_url(config, item))
+    : _sources(_build_sources(config, item))
 {
     ensure_image_folder(config);
     // Download is NOT started here.  get_status() / get_texture() drive
@@ -141,17 +152,21 @@ ImageFetcher::~ImageFetcher()
 // Called every frame (via get_status) until the WorkerSlot accepts the task.
 void ImageFetcher::_try_submit()
 {
-    // ── Fast path: file already on disc ──────────────────────────────────
-    // No network I/O needed — signal the main thread to load it directly.
-    if (pkgi_file_exists(_path.c_str()))
+    // ── Fast path: is any candidate already cached on disc? ───────────────
+    // Checked in priority order so a higher-priority source that shows up
+    // later (e.g. after a bulk sync) is preferred over a stale fallback.
+    for (const auto& src : _sources)
     {
-        _pending_jpeg_path = _path;
-        _upload_pending    = true;
-        _submitted         = true;
-        return; // status stays Pending until get_texture() builds the texture
+        if (pkgi_file_exists(src.path.c_str()))
+        {
+            _pending_image_path = src.path;
+            _upload_pending      = true;
+            _submitted           = true;
+            return; // status stays Pending until get_texture() builds the texture
+        }
     }
 
-    if (_url.empty())
+    if (_sources.empty())
     {
         _status    = Status::Error;
         _submitted = true;
@@ -163,12 +178,12 @@ void ImageFetcher::_try_submit()
     // If ImageFetcher is destroyed before the worker finishes, the
     // shared_ptr keeps ImageFetchResult alive until both sides drop it.
     auto result = std::make_shared<ImageFetchResult>();
-    const std::string path = _path;
-    const std::string url  = _url;
+    const std::vector<Source> sources = _sources;
+    const std::string task_id = sources.front().path; // stable per-title id
 
     if (!WorkerSlot::image_worker().try_submit(
-                _path, // task_id = file path (duplicate detection)
-                [result, path, url]()
+                task_id,
+                [result, sources]()
                 {
                     using namespace std::chrono;
                     const auto t0      = steady_clock::now();
@@ -186,75 +201,89 @@ void ImageFetcher::_try_submit()
                         result->ready.store(true, std::memory_order_release);
                     };
 
-                    // ── Network ───────────────────────────────────────────
-                    // CurlHttp uses libcurl (TLS 1.2 + ECDHE ciphers).
-                    // VitaHttp (sceHttp) lacks elliptic-curve support and
-                    // fails on modern HTTPS servers — curl is used instead.
-                    CurlHttp http;
-                    try { http.start(url, 0); }
-                    catch (const std::exception& e)
+                    // Try each source in order; a 404/failure falls through
+                    // to the next one instead of giving up immediately.
+                    for (const auto& src : sources)
                     {
-                        LOGFW("[ImageFetcher] HTTP start failed for {}: {}",
-                              path, e.what());
-                        done_error(); return;
-                    }
+                        // ── Network ─────────────────────────────────────
+                        // CurlHttp uses libcurl (TLS 1.2 + ECDHE ciphers).
+                        // VitaHttp (sceHttp) lacks elliptic-curve support
+                        // and fails on modern HTTPS servers — curl is used.
+                        CurlHttp http;
+                        try { http.start(src.url, 0); }
+                        catch (const std::exception& e)
+                        {
+                            LOGFW("[ImageFetcher] HTTP start failed for {}: {}",
+                                  src.url, e.what());
+                            continue;
+                        }
 
-                    if (http.get_status() == 404) { done_error(); return; }
+                        if (http.get_status() == 404)
+                            continue;
 
-                    std::vector<uint8_t> data;
-                    data.reserve(32 * 1024);
-                    size_t pos       = 0;
-                    bool   too_large = false;
+                        std::vector<uint8_t> data;
+                        data.reserve(32 * 1024);
+                        size_t pos        = 0;
+                        bool   too_large  = false;
+                        bool   read_failed = false;
 
-                    while (true)
-                    {
-                        if (steady_clock::now() - t0 > timeout)
-                            { done_error(); return; }
+                        while (true)
+                        {
+                            if (steady_clock::now() - t0 > timeout)
+                                { done_error(); return; }
 
-                        if (pos == data.size())
-                            data.resize(pos + 4096);
+                            if (pos == data.size())
+                                data.resize(pos + 4096);
 
-                        int64_t n = 0;
+                            int64_t n = 0;
+                            try
+                            {
+                                n = http.read(
+                                        data.data() + pos, data.size() - pos);
+                            }
+                            catch (const std::exception& e)
+                            {
+                                LOGFW("[ImageFetcher] HTTP read failed for {}: {}",
+                                      src.url, e.what());
+                                read_failed = true;
+                                break;
+                            }
+
+                            if (n == 0) break;
+                            pos += static_cast<size_t>(n);
+                            if (pos > ImageFetcher::MAX_SIZE_BYTES)
+                                { too_large = true; break; }
+                        }
+
+                        if (read_failed || too_large || pos == 0)
+                            continue;
+
+                        data.resize(pos);
+
+                        // ── Save ────────────────────────────────────────
+                        // Write to .tmp then rename so the file is never
+                        // partial.
+                        void* f = nullptr;
                         try
                         {
-                            n = http.read(
-                                    data.data() + pos, data.size() - pos);
+                            const std::string tmp = src.path + ".tmp";
+                            f = pkgi_create(tmp);
+                            pkgi_write(f, data.data(), data.size());
+                            pkgi_close(f); f = nullptr;
+                            pkgi_rename(tmp, src.path);
+                            done_ok(src.path);
+                            return;
                         }
                         catch (const std::exception& e)
                         {
-                            LOGFW("[ImageFetcher] HTTP read failed for {}: {}",
-                                  path, e.what());
-                            done_error(); return;
+                            if (f) pkgi_close(f);
+                            LOGFW("[ImageFetcher] Failed to save {} : {}",
+                                  src.path, e.what());
+                            continue;
                         }
-
-                        if (n == 0) break;
-                        pos += static_cast<size_t>(n);
-                        if (pos > ImageFetcher::MAX_SIZE_BYTES)
-                            { too_large = true; break; }
                     }
 
-                    if (too_large || pos == 0) { done_error(); return; }
-                    data.resize(pos);
-
-                    // ── Save ──────────────────────────────────────────────
-                    // Write to .tmp then rename so the file is never partial.
-                    void* f = nullptr;
-                    try
-                    {
-                        const std::string tmp = path + ".tmp";
-                        f = pkgi_create(tmp);
-                        pkgi_write(f, data.data(), data.size());
-                        pkgi_close(f); f = nullptr;
-                        pkgi_rename(tmp, path);
-                        done_ok(path);
-                    }
-                    catch (const std::exception& e)
-                    {
-                        if (f) pkgi_close(f);
-                        LOGFW("[ImageFetcher] Failed to save {} : {}",
-                              path, e.what());
-                        done_error();
-                    }
+                    done_error(); // every source failed
                 }))
     {
         // Slot is busy — keep _submitted = false and retry next frame.
@@ -284,8 +313,8 @@ ImageFetcher::Status ImageFetcher::get_status()
         {
             // Signal get_texture() to create the vita2d texture on the
             // main thread.  Status stays Pending until that happens.
-            _pending_jpeg_path = std::move(_result->path);
-            _upload_pending    = true;
+            _pending_image_path = std::move(_result->path);
+            _upload_pending      = true;
         }
         _result.reset(); // release shared ownership
     }
@@ -303,17 +332,20 @@ vita2d_texture* ImageFetcher::get_texture()
         return _texture;
 
     // Consume the pending path and create the vita2d texture.
-    // vita2d_load_JPEG_file must run on the main (render) thread.
+    // vita2d_load_*_file must run on the main (render) thread.
     _upload_pending = false;
-    const std::string path = std::move(_pending_jpeg_path);
+    const std::string path = std::move(_pending_image_path);
 
-    vita2d_texture* tex = vita2d_load_JPEG_file(path.c_str());
+    const bool is_png = path.size() >= 4 &&
+            path.compare(path.size() - 4, 4, ".png") == 0;
+
+    vita2d_texture* tex = is_png ? vita2d_load_PNG_file(path.c_str())
+                                  : vita2d_load_JPEG_file(path.c_str());
     if (!tex)
     {
         // Corrupt or unreadable cache file — delete it so the next open
         // triggers a fresh download instead of looping on the same error.
-        LOGFW("[ImageFetcher] vita2d_load_JPEG_file failed for {}, removing",
-              path);
+        LOGFW("[ImageFetcher] failed to decode {}, removing", path);
         pkgi_rm(path.c_str());
     }
 
