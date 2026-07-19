@@ -199,9 +199,9 @@ void Downloader::do_download_package(const DownloadItem& item)
         throw std::runtime_error(
                 "assertion failure: can't handle comppack in download_package");
     }
-    pkgi_rm(fmt::format("{}pkgj/{}.resume", item.partition, item.content)
+    pkgi_rm(fmt::format("{}usagi-pkgj/{}.resume", item.partition, item.content)
                     .c_str());
-    pkgi_delete_dir(fmt::format("{}pkgj/{}", item.partition, item.content));
+    pkgi_delete_dir(fmt::format("{}usagi-pkgj/{}", item.partition, item.content));
     LOG("[%s] Install complete: %s", type_to_string(item.type).c_str(), item.name.c_str());
 }
 
@@ -230,7 +230,7 @@ void Downloader::do_download_comppack(const DownloadItem& item)
     LOGF("Comppack download complete: {}", item.url);
     pkgi_install_comppack(
             item.content, item.type == CompPackPatch, item.version);
-    pkgi_rm(fmt::format("{}pkgj/{}-comp.ppk", item.partition, item.content)
+    pkgi_rm(fmt::format("{}usagi-pkgj/{}-comp.ppk", item.partition, item.content)
                     .c_str());
     LOG("Comppack install complete: %s", item.name.c_str());
 }

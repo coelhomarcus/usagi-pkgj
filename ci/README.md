@@ -1,8 +1,8 @@
-# PKGj Source Code Documentation
+# Usagi PKGj Source Code Documentation
 
 ## Overview
 
-PKGj (toaster-code/pkgj) is a fork of the original [blastrock/pkgj](https://github.com/blastrock/pkgj) homebrew application for the PlayStation Vita. It enables downloading and installing PKG files (PS Vita packages) using TSV/DB sources, BGDL (Background Downloader), and NoNpDrm for bypassing DRM restrictions. The application is written in C++17, features an ImGui-based UI, and is cross-compiled using VitaSDK via Conan and CMake.
+Usagi PKGj (coelhomarcus/usagi-pkgj) is a fork of the original [blastrock/pkgj](https://github.com/blastrock/pkgj) homebrew application for the PlayStation Vita. It enables downloading and installing PKG files (PS Vita packages) using TSV/DB sources, BGDL (Background Downloader), and NoNpDrm for bypassing DRM restrictions. The application is written in C++17, features an ImGui-based UI, and is cross-compiled using VitaSDK via Conan and CMake.
 
 This documentation provides a detailed breakdown of the `/src/` directory structure, including the purpose of each file, key classes, functions, and their interactions.
 

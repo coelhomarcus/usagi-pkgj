@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.6)
 
-project(pkgj)
+project(usagi-pkgj)
 
 if(NOT HOST_BUILD)
   if(NOT BUILD_VITA)
@@ -13,8 +13,8 @@ endif()
 # useful for memory alignment constraints
 set(CMAKE_CXX_STANDARD 17)
 
-set(VITA_APP_NAME "PKGj" CACHE STRING "Vita application display name")
-set(VITA_TITLEID  "PKGJ00000" CACHE STRING "Vita Title ID (4 letters + 5 digits)")
+set(VITA_APP_NAME "Usagi PKGj" CACHE STRING "Vita application display name")
+set(VITA_TITLEID  "USAG00001" CACHE STRING "Vita Title ID (4 letters + 5 digits)")
 set(VITA_VERSION  "0.61" CACHE STRING "Vita application version (XX.XX format for param.sfo)")
 set(PKGI_DISPLAY_VERSION "0.61" CACHE STRING "Version string shown in the app header")
 

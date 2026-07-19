@@ -883,7 +883,7 @@ void pkgi_do_head(void)
     const char* version = PKGI_VERSION;
 
     char title[256];
-    pkgi_snprintf(title, sizeof(title), "PKGj v%s", version);
+    pkgi_snprintf(title, sizeof(title), "Usagi PKGj v%s", version);
     pkgi_draw_text(0, 0, PKGI_COLOR_TEXT_HEAD, title);
 
     pkgi_draw_rect(
@@ -1416,7 +1416,7 @@ void pkgi_start_download(
 #ifndef PKGI_SIMULATOR
     sceIoMkdir("ux0:bgdl", 0777);
 #else
-    pkgi_mkdirs("pkgj/bgdl");
+    pkgi_mkdirs("usagi-pkgj/bgdl");
 #endif
 
     try
@@ -1511,7 +1511,7 @@ int main()
     {
         if (!pkgi_is_unsafe_mode())
             throw std::runtime_error(
-                    "PKGj requires unsafe mode to be enabled in HENkaku "
+                    "Usagi PKGj requires unsafe mode to be enabled in HENkaku "
                     "settings!");
 
         Downloader downloader;
@@ -1528,7 +1528,7 @@ int main()
             pkgi_dialog_error(("Download failure: " + error).c_str());
         };
 
-        LOG("PKGj started");
+        LOG("Usagi PKGj started");
 
         config = pkgi_load_config();
         pkgi_dialog_init();
@@ -1977,6 +1977,6 @@ int main()
         pkgi_end();
     }
 
-    LOG("PKGj shutting down");
+    LOG("Usagi PKGj shutting down");
     pkgi_end();
 }

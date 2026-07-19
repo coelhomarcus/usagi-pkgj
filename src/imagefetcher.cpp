@@ -85,7 +85,7 @@ void ensure_image_folder(const Config* config)
 {
     const std::string folder = config && !config->thumbnail_folder.empty()
             ? config->thumbnail_folder
-            : "ux0:pkgj/cover";
+            : "ux0:usagi-pkgj/cover";
     pkgi_mkdirs(folder.c_str());
 }
 
@@ -114,7 +114,7 @@ std::vector<ImageFetcher::Source> ImageFetcher::_build_sources(
 {
     const std::string folder = config && !config->thumbnail_folder.empty()
             ? config->thumbnail_folder
-            : "ux0:pkgj/cover";
+            : "ux0:usagi-pkgj/cover";
 
     // A custom thumbnail_url is an explicit user override — it is the only
     // source tried, matching the documented behavior (no PSN fallback).

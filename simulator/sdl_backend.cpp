@@ -563,7 +563,7 @@ uint64_t pkgi_get_free_space(const char* path)
 
 const char* pkgi_get_config_folder(void)
 {
-    static const char* folder = "pkgj";
+    static const char* folder = "usagi-pkgj";
     // Ensure the folder exists
     mkdir(folder, 0755);
     return folder;
@@ -573,7 +573,7 @@ int pkgi_is_incomplete(const char* partition, const char* contentid)
 {
     (void)partition;
     return pkgi_file_exists(
-            fmt::format("pkgj/{}.resume", contentid).c_str());
+            fmt::format("usagi-pkgj/{}.resume", contentid).c_str());
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

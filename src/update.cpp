@@ -7,9 +7,9 @@
 
 #include <vector>
 
-// GitHub Releases API — latest release for toaster-code/pkgj
+// GitHub Releases API — latest release for coelhomarcus/usagi-pkgj
 #define PKGJ_RELEASES_API \
-    "https://api.github.com/repos/toaster-code/pkgj/releases/latest"
+    "https://api.github.com/repos/coelhomarcus/usagi-pkgj/releases/latest"
 
 namespace
 {
@@ -72,10 +72,10 @@ void start_download()
 {
     try
     {
-        LOGF("Downloading PKGj update {}", release_tag);
+        LOGF("Downloading Usagi PKGj update {}", release_tag);
 
         const auto filename = fmt::format(
-                "{}/pkgj-{}.vpk", pkgi_get_config_folder(), release_tag);
+                "{}/usagi-pkgj-{}.vpk", pkgi_get_config_folder(), release_tag);
 
         pkgi_dialog_message("Downloading update", 0);
 
@@ -98,11 +98,11 @@ void start_download()
                 pkgi_write(file, data.data(), read);
             }
 
-            LOGF("PKGj update downloaded successfully");
+            LOGF("Usagi PKGj update downloaded successfully");
         }
         catch (...)
         {
-            LOGF("PKGj update download failed, removing partial file");
+            LOGF("Usagi PKGj update download failed, removing partial file");
             pkgi_rm(filename.c_str());
             throw;
         }
@@ -193,14 +193,14 @@ void update_thread()
 
         pkgi_dialog_question(
                 fmt::format(
-                        "New PKGj version {} is available!\nDo you want to "
+                        "New Usagi PKGj version {} is available!\nDo you want to "
                         "download it?",
                         tag)
                         .c_str(),
                 {{"Yes",
                   [] {
                       pkgi_start_thread(
-                              "pkgj_update_download", &start_download);
+                              "usagi-pkgj_update_download", &start_download);
                   }},
                  {"No", [] {}}});
     }
@@ -215,5 +215,5 @@ void update_thread()
 
 void start_update_thread()
 {
-    pkgi_start_thread("pkgj_update", &update_thread);
+    pkgi_start_thread("usagi-pkgj_update", &update_thread);
 }

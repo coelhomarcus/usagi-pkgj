@@ -86,7 +86,7 @@ bool pkgi_psx_is_installed(const char* psppartition, const char* content)
 void pkgi_install(const char* contentid)
 {
     char path[128];
-    snprintf(path, sizeof(path), "ux0:pkgj/%s", contentid);
+    snprintf(path, sizeof(path), "ux0:usagi-pkgj/%s", contentid);
 
     LOG("Installing package from: %s", path);
     const auto res = scePromoterUtilityPromotePkgWithRif(path, 1);
@@ -103,7 +103,7 @@ void pkgi_install_update(const std::string& titleid)
 {
     pkgi_mkdirs("ux0:patch");
 
-    const auto src = fmt::format("ux0:pkgj/{}", titleid);
+    const auto src = fmt::format("ux0:usagi-pkgj/{}", titleid);
 
     LOGF("Installing patch from: {}", src);
     const auto res = scePromoterUtilityPromotePkgWithRif(src.c_str(), 1);
@@ -116,7 +116,7 @@ void pkgi_install_update(const std::string& titleid)
 void pkgi_install_comppack(
         const std::string& titleid, bool patch, const std::string& version)
 {
-    const auto src = fmt::format("ux0:pkgj/{}-comp.ppk", titleid);
+    const auto src = fmt::format("ux0:usagi-pkgj/{}-comp.ppk", titleid);
     const auto dest = fmt::format("ux0:rePatch/{}", titleid);
 
     if (!patch)
@@ -177,7 +177,7 @@ void pkgi_install_psmgame(const char* contentid)
     const std::string base = "ux0:temp/game";
     pkgi_mkdirs(base.c_str());
     const auto titleid = fmt::format("{:.9}", contentid + 7);
-    const auto src = fmt::format("ux0:pkgj/{}", contentid);
+    const auto src = fmt::format("ux0:usagi-pkgj/{}", contentid);
     const auto dest = fmt::format("{}/{}", base, titleid);
 
     LOGF("Moving PSM game: {} -> {}", src, dest);
@@ -207,7 +207,7 @@ void pkgi_install_psmgame(const char* contentid)
 void pkgi_install_pspgame(const char* partition, const char* contentid)
 {
     LOG("Installing PSP/PSX game");
-    const auto path = fmt::format("{}pkgj/{}", partition, contentid);
+    const auto path = fmt::format("{}usagi-pkgj/{}", partition, contentid);
     
     const auto eboot_path = fmt::format("{}/EBOOT.PBP", path);
     const auto sce_sys_path = fmt::format("{}/sce_sys", path);
@@ -266,7 +266,7 @@ static void pkgi_move_merge(const std::string& from, const std::string& to)
 
 void pkgi_install_pspgame_as_iso(const char* partition, const char* contentid)
 {
-    const auto path = fmt::format("{}pkgj/{}", partition, contentid);
+    const auto path = fmt::format("{}usagi-pkgj/{}", partition, contentid);
     const auto dest =
             fmt::format("{}pspemu/PSP/GAME/{:.9}", partition, contentid + 7);
 
@@ -300,7 +300,7 @@ void pkgi_install_pspgame_as_iso(const char* partition, const char* contentid)
 void pkgi_install_pspdlc(const char* partition, const char* contentid)
 {
     LOG("Installing PSP DLC");
-    const auto path = fmt::format("{}pkgj/{}", partition, contentid);
+    const auto path = fmt::format("{}usagi-pkgj/{}", partition, contentid);
     const auto dest =
             fmt::format("{}pspemu/PSP/GAME/{:.9}", partition, contentid + 7);
 

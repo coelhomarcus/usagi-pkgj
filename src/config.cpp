@@ -240,7 +240,7 @@ Config pkgi_load_config()
     try
     {
         Config config{};
-        config.no_version_check = 0;  // update check enabled: points to toaster-code/pkgj
+        config.no_version_check = 0;  // update check enabled: points to coelhomarcus/usagi-pkgj
 
         config.games_url = default_psv_games_url;
         config.dlcs_url = default_psv_dlcs_url;

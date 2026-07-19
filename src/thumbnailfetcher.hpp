@@ -20,7 +20,7 @@ struct vita2d_texture;
 //      On success the file is cached to {folder}/{titleid}.jpg for future use.
 //
 // The folder and base_url come from config.txt:
-//   thumbnail_folder  ux0:pkgj/thumbnails
+//   thumbnail_folder  ux0:usagi-pkgj/thumbnails
 //   thumbnail_url     https://example.com/thumbs
 //
 // Users can also just copy JPEG files manually to the configured folder.

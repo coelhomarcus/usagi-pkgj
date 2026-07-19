@@ -40,7 +40,7 @@ Implemented in `ImageFetcher` (`src/imagefetcher.{hpp,cpp}`), shared by GameView
 
 Setting `thumbnail_url` in `config.txt` overrides both with a custom single source (`{thumbnail_url}/{titleid}.jpg`) — matches the pre-existing custom-thumbnail behavior.
 
-Downloads are serialized through a single global `WorkerSlot` (`src/workerpool.hpp`) — only one cover downloads at a time, on-device or in the simulator — and cached to disk (`thumbnail_folder`, default `ux0:pkgj/cover`) so a title's cover is only ever fetched once.
+Downloads are serialized through a single global `WorkerSlot` (`src/workerpool.hpp`) — only one cover downloads at a time, on-device or in the simulator — and cached to disk (`thumbnail_folder`, default `ux0:usagi-pkgj/cover`) so a title's cover is only ever fetched once.
 
 ### Pagination / memory
 
@@ -271,14 +271,14 @@ Output files in `ci/build/`:
 | File | Description |
 |------|-------------|
 | `eboot.bin` | Signed SELF — the actual executable loaded by the Vita |
-| `pkgj.vpk` | Full installable package (includes `eboot.bin` + Live Area assets) |
+| `usagi-pkgj.vpk` | Full installable package (includes `eboot.bin` + Live Area assets) |
 | `pkgj.elf` | Unsigned ELF — useful for debugging with `gdb` or disassembly |
 
 ### Install on Vita via FTP
 
 ```bash
 # With VitaShell FTP running on the Vita at $PSVITAIP:1337
-curl -T ci/build/eboot.bin ftp://$PSVITAIP:1337/ux0:/app/PKGJ00000/
+curl -T ci/build/eboot.bin ftp://$PSVITAIP:1337/ux0:/app/USAG00001/
 ```
 
 Or use the provided CMake target (builds and sends in one step):
@@ -289,7 +289,7 @@ PSVITAIP=192.168.1.x cmake --build . --target send
 
 ### GitHub Actions
 
-`.github/workflows/build.yml` runs on every push: builds `pkgj_cli` and `pkgj.vpk` on a native x86_64 Ubuntu runner and uploads both as workflow artifacts (Actions tab → the run → **Artifacts**). `.github/workflows/release.yml` publishes `pkgj.vpk` as a GitHub release when a `v*` tag is pushed. Actions is disabled by default on forks — enable it once under the repo's Actions tab before pushing.
+`.github/workflows/build.yml` runs on every push: builds `pkgj_cli` and `usagi-pkgj.vpk` on a native x86_64 Ubuntu runner and uploads both as workflow artifacts (Actions tab → the run → **Artifacts**). `.github/workflows/release.yml` publishes `usagi-pkgj.vpk` as a GitHub release when a version tag is pushed. Actions is disabled by default on forks — enable it once under the repo's Actions tab before pushing.
 
 ---
 

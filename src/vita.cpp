@@ -733,22 +733,20 @@ const char* pkgi_get_config_folder()
     {
     }
 #define CHECK_FOLDER(f) else if (pkgi_file_exists(f "/config.txt")) return f
-    CHECK_FOLDER("ur0:pkgj");
-    CHECK_FOLDER("ux0:pkgj");
-    CHECK_FOLDER("ur0:pkgi");
-    CHECK_FOLDER("ux0:pkgi");
+    CHECK_FOLDER("ur0:usagi-pkgj");
+    CHECK_FOLDER("ux0:usagi-pkgj");
 #undef CHECK_FOLDER
     else
     {
-        pkgi_mkdirs("ux0:pkgj");
-        return "ux0:pkgj";
+        pkgi_mkdirs("ux0:usagi-pkgj");
+        return "ux0:usagi-pkgj";
     }
 }
 
 int pkgi_is_incomplete(const char* partition, const char* contentid)
 {
     return pkgi_file_exists(
-            fmt::format("{}pkgj/{}.resume", partition, contentid).c_str());
+            fmt::format("{}usagi-pkgj/{}.resume", partition, contentid).c_str());
 }
 
 void pkgi_delete_dir(const std::string& path)

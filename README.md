@@ -44,7 +44,7 @@ If you'd rather not wait for covers to pop in while scrolling, use **"Sync all c
 
 # Configuration
 
-pkgj is shipped with valid default URLs. If you wish to change some settings, they can be configured through `ux0:pkgj/config.txt` or `ur0:pkgj/config.txt`.
+Usagi PKGj is shipped with valid default URLs. If you wish to change some settings, they can be configured through `ux0:usagi-pkgj/config.txt` or `ur0:usagi-pkgj/config.txt`.
 
 | Option | Description |
 | --- | --- |
@@ -59,10 +59,10 @@ pkgj is shipped with valid default URLs. If you wish to change some settings, th
 | `url_comppack <URL>` | The URL of the PS Vita compatibility pack list |
 | `install_psp_as_pbp 1` | Install PSP games as EBOOT.EBP files instead of ISO files (see Q&A) |
 | `install_psp_psx_location uma0:` | Install PSP and PSX games on `uma0:` |
-| `no_version_check 1` | Do not check for update when starting PKGj |
+| `no_version_check 1` | Do not check for update when starting Usagi PKGj |
 | `grid_view 1` | Show the PS Vita games list as a cover-art grid instead of the plain-text list |
 | `thumbnail_url <URL>` | Use a custom cover source (`{thumbnail_url}/{titleid}.jpg`) instead of the default HexFlow/PS Store lookup |
-| `thumbnail_folder <path>` | Local folder covers are cached in (default: `ux0:pkgj/cover`) |
+| `thumbnail_folder <path>` | Local folder covers are cached in (default: `ux0:usagi-pkgj/cover`) |
 
 # Q&A
 
@@ -70,7 +70,7 @@ pkgj is shipped with valid default URLs. If you wish to change some settings, th
 
     In case of PSV content: Simply remove queued download in your livearea. If that doesn't work for any reason, you can always delete folder within `ux0:bgdl/t/` - each download will be in separate folder by the order in which they were queued.
 
-    For everything else: `ux0:pkgj` folder - each download will be in separate folder by its title id. Simply delete the folder & resume file.
+    For everything else: `ux0:usagi-pkgj` folder - each download will be in separate folder by its title id. Simply delete the folder & resume file.
 
 2. Download speed is too slow!
 
@@ -113,7 +113,7 @@ pkgj is shipped with valid default URLs. If you wish to change some settings, th
 See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions (host simulator + Vita `.vpk`), the CI pipeline, and a summary of what this fork changes versus upstream.
 
 You can set environment variable `PSVITAIP` (before running cmake) to IP address of
-Vita, that will allow to use `make send` for sending eboot.bin file directly to `ux0:app/PKGJ00000` folder.
+Vita, that will allow to use `make send` for sending eboot.bin file directly to `ux0:app/USAG00001` folder.
 
 To enable debugging logging pass `-DPKGI_ENABLE_LOGGING=ON` argument to cmake. Then application will send debug messages to
 UDP multicast address 239.255.0.100:30000. To receive them you can use [socat][] on your PC:
@@ -123,7 +123,7 @@ UDP multicast address 239.255.0.100:30000. To receive them you can use [socat][]
 # Publishing a release (for maintainers)
 
 Pushing a tag in the form `v0.56` will create a new release and build
-`pkgj.vpk`.
+`usagi-pkgj.vpk`.
 
 If you want to build a beta, you can push a tag in the form `v0.56-beta1` which
 will create a pre-release. Such a release will not be picked up by the auto
