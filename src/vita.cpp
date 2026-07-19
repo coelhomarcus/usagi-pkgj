@@ -554,10 +554,30 @@ void pkgi_openssl_init_locks()
     const int count = CRYPTO_num_locks();
     // Lives for the whole process — OpenSSL may take these locks from any
     // thread at any point until exit, so they are deliberately never freed.
-    g_openssl_locks = new SceKernelLwMutexWork[count];
+    // Zero-initialized (the () — matters: SceKernelLwMutexWork is a plain
+    // struct, so a bare `new[]` would leave every element as uninitialized
+    // garbage until sceKernelCreateLwMutex fills it in below).
+    g_openssl_locks = new SceKernelLwMutexWork[count]();
     for (int i = 0; i < count; ++i)
-        sceKernelCreateLwMutex(
-                &g_openssl_locks[i], "openssl_lock", 0, 0, nullptr);
+    {
+        // Each lock MUST get a distinct name: Vita kernel object names are
+        // not just debug labels, they're looked up by name internally, so
+        // every lock past the first sharing the literal string
+        // "openssl_lock" failed to actually create, leaving
+        // g_openssl_locks[i] as the zero/garbage struct above — which then
+        // got handed straight into the sceKernelLockLwMutex syscall by
+        // pkgi_openssl_lock_cb. That's what was crashing the img_worker
+        // threads (inside call_import) once 3 of them started actually
+        // contending on these locks concurrently.
+        const auto res = sceKernelCreateLwMutex(
+                &g_openssl_locks[i],
+                fmt::format("ssl_lock_{}", i).c_str(),
+                0,
+                0,
+                nullptr);
+        if (res < 0)
+            LOG_ERR("openssl lock %d creation failed: err=0x%08x", i, res);
+    }
     CRYPTO_THREADID_set_callback(pkgi_openssl_threadid_cb);
     CRYPTO_set_locking_callback(pkgi_openssl_lock_cb);
 }
