@@ -154,6 +154,14 @@ public:
         return false; // every slot busy
     }
 
+    bool has_running_task(const std::string& task_id) const
+    {
+        for (const auto& slot : _slots)
+            if (slot->is_running() && slot->current_task_id() == task_id)
+                return true;
+        return false;
+    }
+
     // Global singleton shared by all ImageFetcher instances.
     // Bounds how many cover downloads can be in flight at once.
     static WorkerPool& image_workers()

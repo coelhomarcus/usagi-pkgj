@@ -394,6 +394,27 @@ ImageFetcher::~ImageFetcher()
 // Called every frame (via get_status) until the WorkerPool accepts the task.
 void ImageFetcher::_try_submit()
 {
+    if (_sources.empty())
+    {
+        _status    = Status::Error;
+        _submitted = true;
+        return;
+    }
+
+    const std::string task_id = _sources.front().path; // stable per-title id
+    WorkerPool& workers = WorkerPool::image_workers();
+
+    // A previous ImageFetcher for this same title can outlive the grid cell
+    // that created it: the global worker keeps running after the old fetcher
+    // is destroyed. If this instance saw that in-flight duplicate, check disk
+    // one more time after it finishes so we reuse its saved file instead of
+    // immediately downloading the same cover again.
+    if (_waiting_for_existing_task && !workers.has_running_task(task_id))
+    {
+        _waiting_for_existing_task = false;
+        _disk_checked = false;
+    }
+
     // ── Fast path: is any candidate already cached on disc? ───────────────
     // Checked in priority order so a higher-priority source that shows up
     // later (e.g. after a bulk sync) is preferred over a stale fallback.
@@ -418,24 +439,22 @@ void ImageFetcher::_try_submit()
                 return; // status stays Pending until get_texture() builds the texture
             }
         }
-
-        if (_sources.empty())
-        {
-            _status    = Status::Error;
-            _submitted = true;
-            return;
-        }
     }
 
     // ── Slow path: submit download to the global WorkerPool ───────────────
     // All data captured by VALUE — the lambda must not reference 'this'.
     // If ImageFetcher is destroyed before the worker finishes, the
     // shared_ptr keeps ImageFetchResult alive until both sides drop it.
+    if (workers.has_running_task(task_id))
+    {
+        _waiting_for_existing_task = true;
+        return;
+    }
+
     auto result = std::make_shared<ImageFetchResult>();
     const std::vector<Source> sources = _sources;
-    const std::string task_id = sources.front().path; // stable per-title id
 
-    if (!WorkerPool::image_workers().try_submit(
+    if (!workers.try_submit(
                 task_id,
                 [result, sources]()
                 {

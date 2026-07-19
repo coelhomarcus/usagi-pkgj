@@ -83,6 +83,13 @@ constexpr int kMaxTexUploadsPerFrame = 2;
 uint32_t g_repeat_hold_frames = 0;
 constexpr uint32_t kRepeatFramesPerStep = 6; // ~10 moves/sec at 60fps
 
+// After the user holds a direction for a while, they are scanning through the
+// list rather than looking at the current page. Keep navigation responsive by
+// pausing new cover fetch/decode work until the direction is released; covers
+// already resident in GridTexturePool still draw immediately.
+uint64_t g_direction_hold_usec = 0;
+constexpr uint64_t kCoverFetchPauseHoldUsec = 1 * 1000 * 1000;
+
 // ── Per-cell cover download/decode coordination ─────────────────────────────
 // Keyed by titleid (never by DbItem*: TitleDatabase::reload() invalidates
 // every DbItem pointer, but titleids of surviving items stay valid).
@@ -99,16 +106,23 @@ class GridImageCache
     using CacheMap = std::unordered_map<std::string, std::unique_ptr<ImageFetcher>>;
 
 public:
-    void sync(const std::vector<DbItem*>& wanted, const Config& config, Mode mode)
+    void sync(
+            const std::vector<DbItem*>& wanted,
+            const Config& config,
+            Mode mode,
+            bool allow_create)
     {
-        for (DbItem* item : wanted)
+        if (allow_create)
         {
-            if (_cache.find(item->titleid) != _cache.end())
-                continue;
+            for (DbItem* item : wanted)
+            {
+                if (_cache.find(item->titleid) != _cache.end())
+                    continue;
 
-            _cache.emplace(
-                    item->titleid,
-                    std::make_unique<ImageFetcher>(&config, item, mode));
+                _cache.emplace(
+                        item->titleid,
+                        std::make_unique<ImageFetcher>(&config, item, mode));
+            }
         }
 
         for (auto it = _cache.begin(); it != _cache.end();)
@@ -249,7 +263,8 @@ void draw_cell(
         float cell_w,
         float cell_h,
         bool selected,
-        Mode mode)
+        Mode mode,
+        bool allow_fetch_work)
 {
     const float title_h = ImGui::GetTextLineHeightWithSpacing();
     const ImVec2 cov_min = cell_min;
@@ -273,7 +288,8 @@ void draw_cell(
     }
     // 2) Not in the pool yet: if the download has finished and we're still
     //    under this frame's decode/blit budget, decode it now and store it.
-    else if (fetcher && g_tex_uploads_this_frame < kMaxTexUploadsPerFrame)
+    else if (allow_fetch_work && fetcher &&
+             g_tex_uploads_this_frame < kMaxTexUploadsPerFrame)
     {
         if (auto cover = fetcher->take_decoded_cover())
         {
@@ -293,11 +309,12 @@ void draw_cell(
 
     if (!drawn)
     {
-        const auto status = fetcher ? fetcher->get_status()
-                                     : ImageFetcher::Status::Pending;
-        const bool is_loading =
-                status == ImageFetcher::Status::Downloading ||
-                status == ImageFetcher::Status::Pending;
+        const auto status = allow_fetch_work && fetcher
+                ? fetcher->get_status()
+                : ImageFetcher::Status::Pending;
+        const bool is_loading = allow_fetch_work && fetcher &&
+                (status == ImageFetcher::Status::Downloading ||
+                 status == ImageFetcher::Status::Pending);
 
         vita2d_texture* placeholder = pkgi_get_cover_placeholder(is_loading, mode);
         if (placeholder)
@@ -400,14 +417,32 @@ GridResult pkgi_do_main_grid(
     if (db_count != 0)
         reclamp_window();
 
+    bool allow_cover_fetch_work = true;
+
     if (input && db_count != 0)
     {
         constexpr uint32_t kDirMask = PKGI_BUTTON_UP | PKGI_BUTTON_DOWN |
                 PKGI_BUTTON_LEFT | PKGI_BUTTON_RIGHT;
+        const bool dir_down = (input->down & kDirMask) != 0;
         const bool dir_active = (input->active & kDirMask) != 0;
 
-        if (!dir_active)
+        if (dir_down)
+        {
+            const uint64_t delta = std::min(
+                    input->delta,
+                    static_cast<uint64_t>(kCoverFetchPauseHoldUsec));
+            g_direction_hold_usec = std::min(
+                    g_direction_hold_usec + delta,
+                    static_cast<uint64_t>(kCoverFetchPauseHoldUsec));
+        }
+        else
+        {
             g_repeat_hold_frames = 0;
+            g_direction_hold_usec = 0;
+        }
+
+        allow_cover_fetch_work =
+                g_direction_hold_usec < kCoverFetchPauseHoldUsec;
 
         // Always true on the first active frame of a hold (frame count is
         // freshly 0, and 0 % N == 0) — a tap or the first repeat after the
@@ -496,6 +531,11 @@ GridResult pkgi_do_main_grid(
             }
         }
     }
+    else
+    {
+        g_repeat_hold_frames = 0;
+        g_direction_hold_usec = 0;
+    }
 
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(VITA_WIDTH, VITA_HEIGHT), 0);
@@ -545,7 +585,7 @@ GridResult pkgi_do_main_grid(
                 break;
             wanted.push_back(db.get(idx));
         }
-        g_image_cache.sync(wanted, config, mode);
+        g_image_cache.sync(wanted, config, mode, allow_cover_fetch_work);
 
         for (int slot = 0; slot < kCellsPerPage; ++slot)
         {
@@ -566,7 +606,8 @@ GridResult pkgi_do_main_grid(
                     cell_w,
                     cell_h,
                     idx == selected_item,
-                    mode);
+                    mode,
+                    allow_cover_fetch_work);
         }
     }
 

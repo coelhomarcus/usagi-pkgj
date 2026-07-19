@@ -101,6 +101,7 @@ private:
 
     bool   _submitted{false};       // true once the slot accepted the task
     bool   _disk_checked{false};    // true once the on-disk cache check ran
+    bool   _waiting_for_existing_task{false};
     bool   _cover_taken{false};     // true once take_decoded_cover() consumed it
     Status _status{Status::Pending};
 
