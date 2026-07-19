@@ -1,7 +1,6 @@
 find_package(SQLite3 REQUIRED)
 
 add_executable(pkgj_cli
-  src/annotationdb.cpp
   src/comppackdb.cpp
   src/db.cpp
   src/download.cpp
@@ -48,7 +47,6 @@ if(BUILD_SIM)
   add_executable(pkgj_sim
     # ── Core portable UI ─────────────────────────────────────────────────────
     src/pkgi.cpp
-    src/annotationdb.cpp
     src/comppackdb.cpp
     src/config.cpp
     src/configeditor.cpp
@@ -62,11 +60,12 @@ if(BUILD_SIM)
     src/filehttp.cpp
     src/browserview.cpp
     src/gameview.cpp
-    src/descriptionfetcher.cpp
-    src/screenshotfetcher.cpp
+    src/gridview.cpp
+    src/gridtexturepool.cpp
+    src/coverplaceholder.cpp
+    src/regionflag.cpp
     src/imagefetcher.cpp
     src/curlhttp.cpp
-    src/thumbnailfetcher.cpp
     src/logbuffer.cpp
     src/logviewer.cpp
     src/menu.cpp

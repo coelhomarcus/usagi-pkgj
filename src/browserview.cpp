@@ -10,6 +10,7 @@ extern "C"
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <utility>
 
 // ---------------------------------------------------------------------------
 // Build the static category tree.
@@ -39,23 +40,32 @@ extern "C"
 static std::vector<BrowseNode> build_tree(const Config& config)
 {
     auto root = std::vector<BrowseNode>{
-        { "PSV Games",  ModeGames,    {}, "", "" },
-        { "PSV DLCs",   ModeDlcs,     {}, "", "" },
-        { "PSV Themes", ModeThemes,   {}, "", "" },
-        { "PSV Demos",  ModeDemos,    {}, "", "" },
-        { "PSM Games",  ModePsmGames, {}, "", "" },
-        { "PSP Games",  ModePspGames, {}, "", "" },
-        { "PSP DLCs",   ModePspDlcs,  {}, "", "" },
-        { "PS1 Games",  ModePsxGames, {}, "", "" },
+        { "PlayStation Vita",   std::nullopt, {}, "", "" },
+        { "  Games",            ModeGames,    {}, "", "" },
+        { "  DLCs",             ModeDlcs,     {}, "", "" },
+        { "  Themes",           ModeThemes,   {}, "", "" },
+        { "  Demos",            ModeDemos,    {}, "", "" },
+        { "PlayStation Portable", std::nullopt, {}, "", "" },
+        { "  Games",            ModePspGames, {}, "", "" },
+        { "  DLCs",             ModePspDlcs,  {}, "", "" },
+        { "PlayStation 1",      std::nullopt, {}, "", "" },
+        { "  Games",            ModePsxGames, {}, "", "" },
+        { "PlayStation Mobile", std::nullopt, {}, "", "" },
+        { "  Games",            ModePsmGames, {}, "", "" },
     };
 
-    int custom_number = 1;
+    bool custom_heading_added = false;
     for (const auto& entry : config.custom_entries)
     {
         if (entry.name.empty() || entry.url.empty())
             continue;
+        if (!custom_heading_added)
+        {
+            root.push_back({ "Custom Lists", std::nullopt, {}, "", "" });
+            custom_heading_added = true;
+        }
         root.push_back({
-                fmt::format("Custom {}", custom_number++),
+                "  " + entry.name,
                 std::nullopt,
                 {},
                 "",
@@ -66,6 +76,75 @@ static std::vector<BrowseNode> build_tree(const Config& config)
     return root;
 }
 
+static bool is_selectable_node(const BrowseNode& node)
+{
+    return node.mode.has_value() || !node.children.empty() ||
+            !node.custom_tsv_url.empty();
+}
+
+static size_t first_selectable_index(const std::vector<BrowseNode>& nodes)
+{
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        if (is_selectable_node(nodes[i]))
+            return i;
+    }
+    return nodes.size();
+}
+
+static size_t next_selectable_index(
+        const std::vector<BrowseNode>& nodes,
+        size_t current)
+{
+    for (size_t offset = 1; offset <= nodes.size(); ++offset)
+    {
+        const size_t index = (current + offset) % nodes.size();
+        if (is_selectable_node(nodes[index]))
+            return index;
+    }
+    return nodes.size();
+}
+
+static size_t previous_selectable_index(
+        const std::vector<BrowseNode>& nodes,
+        size_t current)
+{
+    for (size_t offset = 1; offset <= nodes.size(); ++offset)
+    {
+        const size_t index = (current + nodes.size() - offset) % nodes.size();
+        if (is_selectable_node(nodes[index]))
+            return index;
+    }
+    return nodes.size();
+}
+
+struct HintSegment
+{
+    const char* text;
+    uint32_t color;
+};
+
+static int hint_width(const HintSegment* segments, size_t count)
+{
+    int width = 0;
+    for (size_t i = 0; i < count; ++i)
+        width += pkgi_text_width(segments[i].text);
+    return width;
+}
+
+static void draw_hint_segments_centered(
+        int y,
+        const HintSegment* segments,
+        size_t count)
+{
+    int x = (VITA_WIDTH - hint_width(segments, count)) / 2;
+    for (size_t i = 0; i < count; ++i)
+    {
+        pkgi_draw_text(x, y, segments[i].color, segments[i].text);
+        x += pkgi_text_width(segments[i].text);
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 BrowseView::BrowseView(
@@ -74,6 +153,9 @@ BrowseView::BrowseView(
     : _root(build_tree(config))
     , _onNodeSelected(std::move(onNodeSelected))
 {
+    _selected = first_selectable_index(_root);
+    if (_selected >= _root.size())
+        _selected = 0;
 }
 
 const std::vector<BrowseNode>& BrowseView::current_nodes() const
@@ -89,6 +171,11 @@ void BrowseView::enter_child()
     _stack.push_back({ _selected, _first });
     _selected = 0;
     _first    = 0;
+
+    const auto& nodes = current_nodes();
+    _selected = first_selectable_index(nodes);
+    if (_selected >= nodes.size())
+        _selected = 0;
 }
 
 bool BrowseView::go_back()
@@ -116,39 +203,40 @@ bool BrowseView::update(const pkgi_input& input)
     if (count == 0)
         return true;
 
+    if (_selected >= count || !is_selectable_node(nodes[_selected]))
+    {
+        _selected = first_selectable_index(nodes);
+        if (_selected >= count)
+            return true;
+    }
+
     if (input.active & PKGI_BUTTON_UP)
     {
-        if (_selected > 0)
-        {
-            --_selected;
-            if (_selected < _first)
-                _first = _selected;
-        }
-        else
-        {
-            _selected = count - 1;
-            _first    = count > max_vis ? count - max_vis : 0;
-        }
+        _selected = previous_selectable_index(nodes, _selected);
+        if (_selected >= count)
+            return true;
+        if (_selected < _first)
+            _first = _selected;
+        else if (_selected >= _first + max_vis)
+            _first = _selected >= max_vis ? _selected - max_vis + 1 : 0;
     }
 
     if (input.active & PKGI_BUTTON_DOWN)
     {
-        if (_selected + 1 < count)
-        {
-            ++_selected;
-            if (_selected >= _first + max_vis)
-                _first = _selected - max_vis + 1;
-        }
-        else
-        {
-            _selected = 0;
-            _first    = 0;
-        }
+        _selected = next_selectable_index(nodes, _selected);
+        if (_selected >= count)
+            return true;
+        if (_selected < _first)
+            _first = _selected == first_selectable_index(nodes) ? 0 : _selected;
+        else if (_selected >= _first + max_vis)
+            _first = _selected - max_vis + 1;
     }
 
     if (input.pressed & pkgi_ok_button())
     {
         const BrowseNode& node = nodes[_selected];
+        if (!is_selectable_node(node))
+            return true;
         if (!node.children.empty())
             enter_child();
         else
@@ -203,7 +291,8 @@ void BrowseView::render() const
     int y = list_top;
     for (size_t i = _first; i < count && i < _first + max_vis; ++i)
     {
-        const bool sel         = (i == _selected);
+        const bool selectable  = is_selectable_node(nodes[i]);
+        const bool sel         = selectable && (i == _selected);
         const BrowseNode& node = nodes[i];
 
         if (sel)
@@ -212,15 +301,18 @@ void BrowseView::render() const
                     font_h + PKGI_MAIN_ROW_PADDING - 1,
                     PKGI_COLOR_SELECTED_BACKGROUND);
 
-        // ► prefix for nodes that can be entered (have children)
-        const char* arrow = node.children.empty()
-                          ? "   "
-                          : "\xe2\x96\xba  "; // ►
-        const std::string label = fmt::format("{}{}", arrow, node.label);
+        std::string label = node.label;
+        if (!node.children.empty())
+            label = fmt::format("\xe2\x96\xba  {}", node.label); // ►
+
+        const uint32_t color =
+                selectable
+                        ? (sel ? PKGI_COLOR_TEXT_SELECTED : PKGI_COLOR_TEXT)
+                        : PKGI_COLOR_TEXT_SECTION;
 
         pkgi_draw_text(
                 PKGI_MAIN_COLUMN_PADDING, y,
-                sel ? PKGI_COLOR_TEXT_SELECTED : PKGI_COLOR_TEXT,
+                color,
                 label.c_str());
 
         y += font_h + PKGI_MAIN_ROW_PADDING;
@@ -249,16 +341,19 @@ void BrowseView::render() const
     pkgi_draw_rect(
             0, list_bot, VITA_WIDTH, PKGI_MAIN_HLINE_HEIGHT, PKGI_COLOR_HLINE);
 
-    char hint[128];
-    const char* ok_str =
-            pkgi_ok_button() == PKGI_BUTTON_X ? PKGI_UTF8_X : PKGI_UTF8_O;
-    const char* cancel_str =
-            pkgi_cancel_button() == PKGI_BUTTON_O ? PKGI_UTF8_O : PKGI_UTF8_X;
-    pkgi_snprintf(
-            hint, sizeof(hint), "%s Select  %s Back", ok_str, cancel_str);
-    pkgi_draw_text(
-            (VITA_WIDTH - pkgi_text_width(hint)) / 2,
-            list_bot + PKGI_MAIN_HLINE_HEIGHT,
-            PKGI_COLOR_TEXT_TAIL,
-            hint);
+    const HintSegment root_hint[] = {
+        { pkgi_button_str(pkgi_ok_button()), pkgi_button_color(pkgi_ok_button()) },
+        { " Select", PKGI_COLOR_TEXT_TAIL },
+    };
+    const HintSegment child_hint[] = {
+        { pkgi_button_str(pkgi_ok_button()), pkgi_button_color(pkgi_ok_button()) },
+        { " Select  ", PKGI_COLOR_TEXT_TAIL },
+        { pkgi_button_str(pkgi_cancel_button()), pkgi_button_color(pkgi_cancel_button()) },
+        { " Back", PKGI_COLOR_TEXT_TAIL },
+    };
+
+    const HintSegment* hint = _stack.empty() ? root_hint : child_hint;
+    const size_t hint_count =
+            _stack.empty() ? PKGI_COUNTOF(root_hint) : PKGI_COUNTOF(child_hint);
+    draw_hint_segments_centered(list_bot + PKGI_MAIN_HLINE_HEIGHT, hint, hint_count);
 }

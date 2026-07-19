@@ -31,15 +31,17 @@ typedef struct Config
     std::string comppack_url;
 
     // Image panel settings
-    // thumbnail_url    : optional base URL for custom images fetched as
-    //                    {thumbnail_url}/{titleid}.jpg.
-    //                    Leave empty to fall back to the default PS Store cover.
     // thumbnail_folder : local directory where images are stored/cached.
-    //                    Leave empty to use the default: ux0:pkgj/cover
+    //                    Leave empty to use the default: ux0:usagi-pkgj/cover
     // thumbnail_size   : panel size preset — 0=off, 1=small, 2=medium (default), 3=large
-    std::string thumbnail_url;
     std::string thumbnail_folder;
     int thumbnail_size{2};
+
+    // Display settings
+    // grid_view : when true (the default), ModeGames/ModePspGames/
+    //             ModePsxGames render as a cover-art grid instead of the
+    //             plain-text list. Other modes always use the list.
+    bool grid_view{true};
 
     std::array<CustomConfigEntry, 5> custom_entries;
 } Config;

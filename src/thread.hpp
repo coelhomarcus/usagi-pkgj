@@ -6,6 +6,7 @@
 #include <psp2/kernel/threadmgr.h>
 #endif // PKGI_SIMULATOR
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -83,13 +84,17 @@ class Thread
 {
 public:
     using EntryPoint = std::function<void()>;
+    static constexpr std::size_t kDefaultStackSize = 256 * 1024;
 
     Thread(const Thread&) = delete;
     Thread(Thread&&) = delete;
     Thread& operator=(const Thread&) = delete;
     Thread& operator=(Thread&&) = delete;
 
-    Thread(const std::string& /*name*/, EntryPoint entry)
+    Thread(
+            const std::string& /*name*/,
+            EntryPoint entry,
+            std::size_t /*stack_size*/ = kDefaultStackSize)
         : _t(std::move(entry))
     {}
 
@@ -135,13 +140,12 @@ public:
 
     Mutex(const std::string& name)
     {
-        // I don't know what this 2 is
         const auto res =
                 sceKernelCreateLwMutex(&_mutex, name.c_str(), 0, 0, nullptr);
         if (res < 0)
         {
-            // TODO throw
             LOG_ERR("Mutex creation failed: err=0x%08x", res);
+            throw std::runtime_error("Mutex creation failed");
         }
     }
 
@@ -160,8 +164,8 @@ public:
         const auto res = sceKernelLockLwMutex(&_mutex, 1, nullptr);
         if (res < 0)
         {
-            // TODO throw
             LOG_ERR("Mutex lock failed: err=0x%08x", res);
+            throw std::runtime_error("Mutex lock failed");
         }
     }
 
@@ -182,8 +186,8 @@ public:
         const auto res = sceKernelUnlockLwMutex(&_mutex, 1);
         if (res < 0)
         {
-            // TODO throw
             LOG_ERR("Mutex unlock failed: err=0x%08x", res);
+            throw std::runtime_error("Mutex unlock failed");
         }
     }
 
@@ -207,8 +211,8 @@ public:
                 &_cond, name.c_str(), 0, &_mutex._mutex, nullptr);
         if (res < 0)
         {
-            // TODO throw
             LOG_ERR("Condition variable creation failed: err=0x%08x", res);
+            throw std::runtime_error("Condition variable creation failed");
         }
     }
 
@@ -227,8 +231,8 @@ public:
         const auto res = sceKernelSignalLwCond(&_cond);
         if (res < 0)
         {
-            // TODO throw
             LOG_ERR("Condition variable signal failed: err=0x%08x", res);
+            throw std::runtime_error("Condition variable signal failed");
         }
     }
 
@@ -237,8 +241,8 @@ public:
         const auto res = sceKernelWaitLwCond(&_cond, nullptr);
         if (res < 0)
         {
-            // TODO throw
             LOG_ERR("Condition variable wait failed: err=0x%08x", res);
+            throw std::runtime_error("Condition variable wait failed");
         }
     }
 
@@ -256,33 +260,48 @@ class Thread
 {
 public:
     using EntryPoint = std::function<void()>;
+    static constexpr std::size_t kDefaultStackSize = 256 * 1024;
 
     Thread(const Thread&) = delete;
     Thread(Thread&&) = delete;
     Thread& operator=(const Thread&) = delete;
     Thread& operator=(Thread&&) = delete;
 
-    Thread(const std::string& name, EntryPoint entry)
+    Thread(
+            const std::string& name,
+            EntryPoint entry,
+            std::size_t stack_size = kDefaultStackSize)
     {
         _tid = sceKernelCreateThread(
-                name.c_str(), &entry_point, 0xb0, 0x8000, 0, 0, nullptr);
+                name.c_str(),
+                &entry_point,
+                0xb0,
+                static_cast<SceSize>(stack_size),
+                0,
+                0,
+                nullptr);
         if (_tid < 0)
         {
-            // TODO throw
             LOG_ERR("Thread creation failed: err=0x%08x", _tid);
+            throw std::runtime_error("Thread creation failed");
         }
         auto entryp = new EntryPoint(std::move(entry));
         const auto res = sceKernelStartThread(_tid, sizeof(entryp), &entryp);
         if (res < 0)
         {
             delete entryp;
-            // TODO throw
             LOG_ERR("Thread start failed: err=0x%08x", res);
+            sceKernelDeleteThread(_tid);
+            _tid = -1;
+            throw std::runtime_error("Thread start failed");
         }
     }
 
     ~Thread()
     {
+        if (_tid < 0)
+            return;
+
         const auto res = sceKernelDeleteThread(_tid);
         if (res < 0)
         {
@@ -293,6 +312,9 @@ public:
 
     void join()
     {
+        if (_tid < 0)
+            return;
+
         int stat;
         const auto res = sceKernelWaitThreadEnd(_tid, &stat, nullptr);
         if (res < 0)
@@ -303,7 +325,7 @@ public:
     }
 
 private:
-    SceUID _tid;
+    SceUID _tid{-1};
 
     static int entry_point(SceSize, void* argp)
     {

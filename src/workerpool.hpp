@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 // WorkerSlot — a single-slot background worker.
 //
@@ -21,9 +22,14 @@
 //  • The caller can be destroyed safely at any time: results are handed
 //    back through a shared_ptr, so even if the owner is gone the worker
 //    writes into the still-live result object and then releases it.
+//
+// See WorkerPool below for a small fixed-size pool of these — that's what
+// ImageFetcher actually submits to.
 class WorkerSlot
 {
 public:
+    static constexpr size_t kImageWorkerStackSize = 256 * 1024;
+
     WorkerSlot()  = default;
     ~WorkerSlot()
     {
@@ -72,13 +78,23 @@ public:
 
         // Wrap fn: after fn() returns, mark the slot idle again so the next
         // try_submit() can start a new task on the following frame.
-        _thread = std::make_unique<Thread>(
-                "img_worker",
-                [this, fn = std::move(fn)]() mutable
-                {
-                    fn();
-                    _running.store(false, std::memory_order_release);
-                });
+        try
+        {
+            _thread = std::make_unique<Thread>(
+                    "img_worker",
+                    [this, fn = std::move(fn)]() mutable
+                    {
+                        fn();
+                        _running.store(false, std::memory_order_release);
+                    },
+                    kImageWorkerStackSize);
+        }
+        catch (...)
+        {
+            _running.store(false, std::memory_order_release);
+            _current_task_id.clear();
+            throw;
+        }
 
         return true;
     }
@@ -97,16 +113,68 @@ public:
         }
     }
 
-    // Global singleton shared by all ImageFetcher instances.
-    // Ensures at most one background download is in flight at any time.
-    static WorkerSlot& image_worker()
-    {
-        static WorkerSlot s;
-        return s;
-    }
-
 private:
     std::unique_ptr<Thread> _thread;
     std::atomic<bool>       _running{false};
     std::string             _current_task_id; // written from the main thread only
+};
+
+// WorkerPool — a small fixed-size pool of WorkerSlots.
+//
+// try_submit() hands the task to the first free slot. Unlike a single
+// WorkerSlot, a busy slot no longer implies the whole pool is busy — so
+// task_id duplicate detection has to be done explicitly, across every slot,
+// before looking for a free one: the same cover can be wanted by two
+// independent ImageFetcher instances at once (e.g. GridImageCache and
+// GameView's own fetcher, for a title visible in both at the same time),
+// and letting both run concurrently would race two workers writing the
+// same .tmp cache file.
+//
+// All methods are main-thread-only, same as WorkerSlot.
+class WorkerPool
+{
+public:
+    explicit WorkerPool(size_t slot_count)
+    {
+        _slots.reserve(slot_count);
+        for (size_t i = 0; i < slot_count; ++i)
+            _slots.push_back(std::make_unique<WorkerSlot>());
+    }
+
+    bool try_submit(const std::string& task_id, std::function<void()> fn)
+    {
+        for (const auto& slot : _slots)
+            if (slot->is_running() && slot->current_task_id() == task_id)
+                return false; // duplicate in-flight on another slot
+
+        for (auto& slot : _slots)
+            if (slot->try_submit(task_id, fn))
+                return true;
+
+        return false; // every slot busy
+    }
+
+    bool has_running_task(const std::string& task_id) const
+    {
+        for (const auto& slot : _slots)
+            if (slot->is_running() && slot->current_task_id() == task_id)
+                return true;
+        return false;
+    }
+
+    // Global singleton shared by all ImageFetcher instances.
+    // Bounds how many cover downloads can be in flight at once.
+    static WorkerPool& image_workers()
+    {
+        // CurlHttp::start() is serialized process-wide anyway, and the cover
+        // pipeline is currently being hardened against Vita3K/render-thread
+        // timing issues. Keep image fetching serial so background workers do
+        // not add extra stack, heap, log, or cache-file concurrency while the
+        // UI-side texture lifetime is the active risk.
+        static WorkerPool pool(1);
+        return pool;
+    }
+
+private:
+    std::vector<std::unique_ptr<WorkerSlot>> _slots;
 };

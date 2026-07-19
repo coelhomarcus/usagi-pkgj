@@ -1186,7 +1186,7 @@ int Download::pkgi_download(
         const uint8_t* rif,
         const uint8_t* digest)
 {
-    root = fmt::format("{}pkgj/{}", partition, content);
+    root = fmt::format("{}usagi-pkgj/{}", partition, content);
     LOGF("temp installation folder: {}", root);
 
     try

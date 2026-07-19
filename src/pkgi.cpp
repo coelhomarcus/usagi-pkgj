@@ -4,7 +4,6 @@ extern "C"
 {
 #include "style.h"
 }
-#include "annotationdb.hpp"
 #include "bgdl.hpp"
 #include "comppackdb.hpp"
 #include "config.hpp"
@@ -15,6 +14,8 @@ extern "C"
 #include "download.hpp"
 #include "downloader.hpp"
 #include "gameview.hpp"
+#include "gridview.hpp"
+#include "regionflag.hpp"
 #include "imgui.hpp"
 #include "install.hpp"
 #include "logviewer.hpp"
@@ -41,6 +42,7 @@ extern SDL_Texture* sim_create_font_texture(const uint32_t* px, int w, int h);
 #include <memory>
 #include <set>
 #include <cctype>
+#include <vector>
 
 #ifndef PKGI_SIMULATOR
 #include <psp2common/npdrm.h>
@@ -52,9 +54,6 @@ extern SDL_Texture* sim_create_font_texture(const uint32_t* px, int w, int h);
 
 namespace
 {
-// forward declaration — defined later in this anonymous namespace
-void pkgi_apply_annotations();
-
 typedef enum
 {
     StateError,
@@ -97,7 +96,6 @@ std::unique_ptr<GameView> gameview;
 std::unique_ptr<ConfigEditor> config_editor;
 std::unique_ptr<LogViewer> log_viewer;
 std::unique_ptr<BrowseView> browse_view;
-std::unique_ptr<AnnotationDatabase> annotation_db;
 bool need_refresh = true;
 bool runtime_install_queued = false;
 std::string content_to_refresh;
@@ -106,16 +104,6 @@ void pkgi_reload();
 bool pkgi_overlay_is_open()
 {
     return gameview || config_editor || log_viewer;
-}
-
-const char* pkgi_get_ok_str(void)
-{
-    return pkgi_ok_button() == PKGI_BUTTON_X ? PKGI_UTF8_X : PKGI_UTF8_O;
-}
-
-const char* pkgi_get_cancel_str(void)
-{
-    return pkgi_cancel_button() == PKGI_BUTTON_O ? PKGI_UTF8_O : PKGI_UTF8_X;
 }
 
 Type mode_to_type(Mode mode)
@@ -216,160 +204,6 @@ std::string const& pkgi_get_url_from_mode(Mode mode)
             fmt::format("unknown mode: {}", static_cast<int>(mode)));
 }
 
-static const int PKGI_GROUP_COUNT = 29;
-
-static bool pkgi_utf8_next_codepoint(
-        const std::string& text,
-        size_t& pos,
-        uint32_t& codepoint)
-{
-    if (pos >= text.size())
-        return false;
-
-    const unsigned char c = static_cast<unsigned char>(text[pos]);
-    if (c < 0x80)
-    {
-        codepoint = c;
-        pos += 1;
-        return true;
-    }
-    if ((c & 0xE0) == 0xC0 && pos + 1 < text.size())
-    {
-        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
-        codepoint = ((c & 0x1F) << 6) | (c1 & 0x3F);
-        pos += 2;
-        return true;
-    }
-    if ((c & 0xF0) == 0xE0 && pos + 2 < text.size())
-    {
-        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
-        const unsigned char c2 = static_cast<unsigned char>(text[pos + 2]);
-        codepoint = ((c & 0x0F) << 12) | ((c1 & 0x3F) << 6) |
-                    (c2 & 0x3F);
-        pos += 3;
-        return true;
-    }
-    if ((c & 0xF8) == 0xF0 && pos + 3 < text.size())
-    {
-        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
-        const unsigned char c2 = static_cast<unsigned char>(text[pos + 2]);
-        const unsigned char c3 = static_cast<unsigned char>(text[pos + 3]);
-        codepoint = ((c & 0x07) << 18) | ((c1 & 0x3F) << 12) |
-                    ((c2 & 0x3F) << 6) | (c3 & 0x3F);
-        pos += 4;
-        return true;
-    }
-
-    // Invalid UTF-8 sequence, skip one byte.
-    pos += 1;
-    return false;
-}
-
-static bool pkgi_is_other_script(uint32_t c)
-{
-    // CJK and East Asian blocks.
-    if ((0x3040 <= c && c <= 0x30FF) ||  // Hiragana/Katakana
-        (0x31F0 <= c && c <= 0x31FF) ||  // Katakana Phonetic Extensions
-        (0x3400 <= c && c <= 0x4DBF) ||  // CJK Extension A
-        (0x4E00 <= c && c <= 0x9FFF) ||  // CJK Unified Ideographs
-        (0xF900 <= c && c <= 0xFAFF) ||  // CJK Compatibility Ideographs
-        (0xAC00 <= c && c <= 0xD7AF) ||  // Hangul Syllables
-        (0x1100 <= c && c <= 0x11FF) ||  // Hangul Jamo
-        (0x3130 <= c && c <= 0x318F) ||  // Hangul Compatibility Jamo
-        (0x20000 <= c && c <= 0x2FA1F) || // Additional CJK
-        (0x3000 <= c && c <= 0x303F))    // CJK Symbols and Punctuation
-        return true;
-    return false;
-}
-
-static int pkgi_name_group(const std::string& name)
-{
-    size_t i = 0;
-    while (i < name.size() && std::isspace(static_cast<unsigned char>(name[i])))
-        ++i;
-
-    while (i < name.size())
-    {
-        uint32_t cp;
-        if (!pkgi_utf8_next_codepoint(name, i, cp))
-            continue;
-
-        if (cp < 0x80)
-        {
-            if (cp >= '0' && cp <= '9')
-                return 0;
-            if (cp == '@')
-                return 1;
-            if (cp >= 'A' && cp <= 'Z')
-                return static_cast<int>(cp - 'A') + 2;
-            if (cp >= 'a' && cp <= 'z')
-                return static_cast<int>(cp - 'a') + 2;
-            if (std::ispunct(static_cast<unsigned char>(cp)))
-                return 1;
-            if (std::isspace(static_cast<unsigned char>(cp)))
-                continue;
-            return 28;
-        }
-
-        if (pkgi_is_other_script(cp))
-            return 28;
-
-        // Non-ASCII non-CJK characters are treated as Other.
-        return 28;
-    }
-
-    return 28;
-}
-
-static const char* pkgi_group_label(int group)
-{
-    if (group == 0)
-        return "0-9";
-    if (group == 1)
-        return "@";
-    if (group >= 2 && group <= 27)
-    {
-        static char text[2] = "A";
-        text[0] = static_cast<char>('A' + group - 2);
-        return text;
-    }
-    return "Other";
-}
-
-static int pkgi_next_group(int current, const bool present[PKGI_GROUP_COUNT], bool forward)
-{
-    if (current < 0 || current >= PKGI_GROUP_COUNT)
-        current = 0;
-
-    for (int step = 1; step < PKGI_GROUP_COUNT; ++step)
-    {
-        int idx = forward
-                ? (current + step) % PKGI_GROUP_COUNT
-                : (current + PKGI_GROUP_COUNT - step) % PKGI_GROUP_COUNT;
-        if (present[idx])
-            return idx;
-    }
-    return current;
-}
-
-static uint32_t pkgi_first_item_with_group(int group)
-{
-    const uint32_t db_count = db ? db->count() : 0;
-    for (uint32_t i = 0; i < db_count; ++i)
-        if (pkgi_name_group(db->get(i)->name) == group)
-            return i;
-    return 0;
-}
-
-static std::string pkgi_group_overlay_text;
-static uint32_t pkgi_group_overlay_until = 0;
-
-static void pkgi_set_group_overlay(int group)
-{
-    pkgi_group_overlay_text = pkgi_group_label(group);
-    pkgi_group_overlay_until = pkgi_time_msec() + 2000;
-}
-
 void pkgi_refresh_thread(void)
 {
     LOG("Checking for app updates");
@@ -425,7 +259,6 @@ void pkgi_refresh_thread(void)
         first_item = 0;
         selected_item = 0;
         configure_db(db.get(), search_active ? search_text : NULL, &config);
-        pkgi_apply_annotations();
     }
     catch (const std::exception& e)
     {
@@ -444,6 +277,13 @@ const char* pkgi_get_mode_partition()
     return mode == ModePspGames || mode == ModePspDlcs || mode == ModePsxGames
                    ? config.install_psp_psx_location.c_str()
                    : "ux0:";
+}
+
+// Modes the cover-art grid view (pkgi_do_main_grid) supports — everything
+// else always uses the plain-text list regardless of config.grid_view.
+bool pkgi_grid_supported_mode(Mode m)
+{
+    return m == ModeGames || m == ModePspGames || m == ModePsxGames;
 }
 
 void pkgi_refresh_installed_packages()
@@ -552,13 +392,54 @@ void pkgi_mark_all_items_unknown()
         db->get(i)->presence = PresenceUnknown;
 }
 
+// Opens GameView for the currently selected_item. Shared by the list view
+// (pkgi_do_main) and the grid view (pkgi_do_main_grid) so cover-image and
+// row-based navigation both end up at the exact same detail screen.
+void pkgi_open_gameview_for_selected(Downloader& downloader)
+{
+    if (selected_item >= db->count())
+        return;
+    DbItem* item = db->get(selected_item);
+
+    gameview = std::make_unique<GameView>(
+            mode,
+            &config,
+            &downloader,
+            item,
+            mode == ModeGames ? comppack_db_games->get(item->titleid)
+                               : std::optional<CompPackDatabase::Item>{},
+            mode == ModeGames ? comppack_db_updates->get(item->titleid)
+                               : std::optional<CompPackDatabase::Item>{});
+}
+
+// Opens the Triangle options menu. Shared by the list view (pkgi_do_main)
+// and the grid view (pkgi_do_main_grid) so both start it identically.
+void pkgi_open_options_menu()
+{
+    config_temp = config;
+    int allow_refresh = !config.games_url.empty() << 0 |
+                        !config.dlcs_url.empty() << 1 |
+                        !config.demos_url.empty() << 6 |
+                        !config.themes_url.empty() << 5 |
+                        !config.psx_games_url.empty() << 2 |
+                        !config.psp_games_url.empty() << 3 |
+                        !config.psp_dlcs_url.empty() << 7 |
+                        !config.psm_games_url.empty() << 4;
+    pkgi_menu_start(search_active, &config, allow_refresh);
+}
+
 void pkgi_do_main(Downloader& downloader, pkgi_input* input)
 {
     int col_titleid = 0;
     int col_region = col_titleid + pkgi_text_width("PCSE00000") +
                      PKGI_MAIN_COLUMN_PADDING;
+    // Flag badges are drawn at a fixed 3:2 box matching the row's text
+    // height, same ratio as the embedded assets/flags/*.png canvas, so no
+    // per-flag aspect-ratio math is needed at draw time.
+    int region_flag_h = font_height;
+    int region_flag_w = region_flag_h * 3 / 2;
     int col_installed =
-            col_region + pkgi_text_width("USA") + PKGI_MAIN_COLUMN_PADDING;
+            col_region + region_flag_w + PKGI_MAIN_COLUMN_PADDING;
     int col_name = col_installed + pkgi_text_width(PKGI_UTF8_INSTALLED) +
                    PKGI_MAIN_COLUMN_PADDING;
 
@@ -794,29 +675,23 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
         }
 
         pkgi_draw_text(col_titleid, y, color, titleid);
-        const char* region;
-        switch (pkgi_get_region(item->titleid))
+        const GameRegion item_region = pkgi_get_region(item->titleid);
+        vita2d_texture* region_flag = pkgi_get_region_flag(item_region);
+        if (region_flag)
         {
-        case RegionASA:
-            region = "ASA";
-            break;
-        case RegionEUR:
-            region = "EUR";
-            break;
-        case RegionJPN:
-            region = "JPN";
-            break;
-        case RegionINT:
-            region = "INT";
-            break;
-        case RegionUSA:
-            region = "USA";
-            break;
-        default:
-            region = "???";
-            break;
+            pkgi_draw_texture_scaled(
+                    region_flag,
+                    col_region,
+                    y,
+                    region_flag_w,
+                    region_flag_h);
         }
-        pkgi_draw_text(col_region, y, color, region);
+        else
+        {
+            // No single flag represents these — keep the text code.
+            const char* region = item_region == RegionINT ? "INT" : "???";
+            pkgi_draw_text(col_region, y, color, region);
+        }
         if (item->presence == PresenceIncomplete)
         {
             pkgi_draw_text(col_installed, y, color, PKGI_UTF8_PARTIAL);
@@ -852,17 +727,9 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
                         PKGI_MAIN_COLUMN_PADDING - sizew - col_name,
                 line_height);
         item->selected = std::find(selected_items.begin(), selected_items.end(), item) != selected_items.end();
-        {
-            std::string display_name;
-            if (item->user_flag != UserFlag::None)
-                display_name = fmt::format("{} {}",
-                        user_flag_symbol(item->user_flag), item->name);
-            else
-                display_name = item->name;
-            pkgi_draw_text(col_name, y,
-                    item->selected ? PKGI_COLOR_TEXT_SELECTED : PKGI_COLOR_TEXT,
-                    display_name.c_str());
-        }
+        pkgi_draw_text(col_name, y,
+                item->selected ? PKGI_COLOR_TEXT_SELECTED : PKGI_COLOR_TEXT,
+                item->name.c_str());
         pkgi_clip_remove();
 
         y += font_height + PKGI_MAIN_ROW_PADDING;
@@ -918,20 +785,7 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
         }
     }
 
-    if (!pkgi_group_overlay_text.empty() &&
-            pkgi_time_msec() < pkgi_group_overlay_until)
-    {
-        const float scale = 4.0f;
-        int w = static_cast<int>(pkgi_text_width(pkgi_group_overlay_text.c_str()) * scale);
-        int h = static_cast<int>(pkgi_text_height("M") * scale);
-        int text_top = (VITA_HEIGHT - h) / 2;
-        int x = (VITA_WIDTH - w) / 2;
-        int y = text_top;
-        pkgi_draw_rect(x - 12, text_top - 12, w + 24, h + 24, PKGI_COLOR_MENU_BACKGROUND);
-        const uint32_t overlay_color = (0x33u << 24) | PKGI_COLOR_TEXT_HEAD;
-        pkgi_draw_text_scale(
-                x, y, overlay_color, pkgi_group_overlay_text.c_str(), scale);
-    }
+    pkgi_draw_group_overlay();
 
     if (input && (input->pressed & pkgi_ok_button()))
     {
@@ -942,16 +796,7 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
         DbItem* item = db->get(selected_item);
 
         if (mode == ModeGames || mode == ModePspGames)
-            gameview = std::make_unique<GameView>(
-                mode,
-                    &config,
-                    &downloader,
-                    item,
-                mode == ModeGames ? comppack_db_games->get(item->titleid)
-                          : std::optional<CompPackDatabase::Item>{},
-                mode == ModeGames ? comppack_db_updates->get(item->titleid)
-                          : std::optional<CompPackDatabase::Item>{},
-                    annotation_db.get());
+            pkgi_open_gameview_for_selected(downloader);
         else if (mode == ModeThemes || mode == ModeDemos)
         {
             pkgi_start_download(downloader, *item);
@@ -997,33 +842,7 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
     }
     else if (input && (input->pressed & PKGI_BUTTON_S))
     {
-        /*
-        * Annotation Flag Cycling Logic
-        * ----------------------------
-        * This block handles user flag annotation for games.
-        * - When the S button is pressed in ModeGames, the currently selected game's user_flag is cycled forward (wraps around).
-        * - The new flag is saved immediately to the annotation database (AnnotationDatabase).
-        * - Flags are defined in src/annotationdb.hpp as UserFlag enum.
-        * - The annotation system allows users to mark games with custom statuses (Favorite, Good, Bad, Completed, etc.).
-        * - See also: src/annotationdb.cpp, src/db.hpp, src/gameview.cpp for UI integration.
-        *
-        * Related context: .github/copilot-instructions.md (Annotation Feature section)
-        */
-        if (mode == ModeGames || mode == ModePspGames)
-        {
-            input->pressed &= ~PKGI_BUTTON_S;
-            DbItem* item = db->get(selected_item);
-            if (item && annotation_db)
-            {
-                // Cycle flag forward (wraps around)
-                const int next = (static_cast<int>(item->user_flag) + 1) % UserFlagCount;
-                item->user_flag = static_cast<UserFlag>(next);
-                UserAnnotation ann = annotation_db->get(item->titleid);
-                ann.flag = item->user_flag;
-                annotation_db->set(item->titleid, ann);
-            }
-        }
-        else if (mode == ModeDlcs) 
+        if (mode == ModeDlcs)
         {
             input->pressed &= ~PKGI_BUTTON_S;
             DbItem* item = db->get(selected_item);
@@ -1040,17 +859,7 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
     else if (input && (input->pressed & PKGI_BUTTON_T))
     {
         input->pressed &= ~PKGI_BUTTON_T;
-
-        config_temp = config;
-        int allow_refresh = !config.games_url.empty() << 0 |
-                            !config.dlcs_url.empty() << 1 |
-                            !config.demos_url.empty() << 6 |
-                            !config.themes_url.empty() << 5 |
-                            !config.psx_games_url.empty() << 2 |
-                            !config.psp_games_url.empty() << 3 |
-                            !config.psp_dlcs_url.empty() << 7 |
-                            !config.psm_games_url.empty() << 4;
-        pkgi_menu_start(search_active, &config, allow_refresh);
+        pkgi_open_options_menu();
     }
 }
 
@@ -1080,7 +889,7 @@ void pkgi_do_head(void)
     const char* version = PKGI_VERSION;
 
     char title[256];
-    pkgi_snprintf(title, sizeof(title), "PKGj v%s", version);
+    pkgi_snprintf(title, sizeof(title), "Usagi PKGj v%s", version);
     pkgi_draw_text(0, 0, PKGI_COLOR_TEXT_HEAD, title);
 
     pkgi_draw_rect(
@@ -1170,6 +979,52 @@ uint64_t get_speed(const uint64_t download_offset)
     return last_progress_speed;
 }
 
+struct TextSegment
+{
+    std::string text;
+    uint32_t color;
+};
+
+int segments_width(const std::vector<TextSegment>& segments)
+{
+    int width = 0;
+    for (const auto& segment : segments)
+        width += pkgi_text_width(segment.text.c_str());
+    return width;
+}
+
+void append_text_segment(
+        std::vector<TextSegment>& segments,
+        const std::string& text)
+{
+    if (!text.empty())
+        segments.push_back({ text, PKGI_COLOR_TEXT_TAIL });
+}
+
+void append_button_segment(std::vector<TextSegment>& segments, uint32_t button)
+{
+    const char* text = pkgi_button_str(button);
+    if (text[0] != 0)
+        segments.push_back({ text, pkgi_button_color(button) });
+}
+
+void draw_centered_segments(
+        int y,
+        int left,
+        int right,
+        const std::vector<TextSegment>& segments)
+{
+    const int width = segments_width(segments);
+    const int area_width = VITA_WIDTH - left - right;
+    int x = left + (area_width - width) / 2;
+
+    for (const auto& segment : segments)
+    {
+        pkgi_draw_text(x, y, segment.color, segment.text.c_str());
+        x += pkgi_text_width(segment.text.c_str());
+    }
+}
+
 void pkgi_do_tail(Downloader& downloader)
 {
     char text[256];
@@ -1187,15 +1042,24 @@ void pkgi_do_tail(Downloader& downloader)
     if (download_size == 0)
         download_size = 1;
 
-    pkgi_draw_rect(
-            0,
-            bottom_y + PKGI_MAIN_HLINE_HEIGHT,
-            VITA_WIDTH * download_offset / download_size,
-            font_height + PKGI_MAIN_ROW_PADDING - 1,
-            PKGI_COLOR_PROGRESS_BACKGROUND);
-
     if (current_download)
     {
+        const int progress_height = font_height + PKGI_MAIN_ROW_PADDING - 1;
+        const int progress_width =
+                VITA_WIDTH * download_offset / download_size;
+        pkgi_draw_rect(
+                0,
+                bottom_y + PKGI_MAIN_HLINE_HEIGHT,
+                VITA_WIDTH,
+                progress_height,
+                PKGI_COLOR_PROGRESS_BACKGROUND);
+        pkgi_draw_rect(
+                0,
+                bottom_y + PKGI_MAIN_HLINE_HEIGHT,
+                progress_width,
+                progress_height,
+                PKGI_COLOR_PROGRESS_BAR);
+
         const auto speed = get_speed(download_offset);
         std::string sspeed;
 
@@ -1218,11 +1082,13 @@ void pkgi_do_tail(Downloader& downloader)
     else
         pkgi_snprintf(text, sizeof(text), "Idle");
 
-    pkgi_draw_text(0, bottom_y, PKGI_COLOR_TEXT_TAIL, text);
+    const uint32_t tail_status_color =
+            current_download ? PKGI_COLOR_TEXT_DOWNLOAD : PKGI_COLOR_TEXT_TAIL;
+    pkgi_draw_text(0, bottom_y, tail_status_color, text);
     if (mode == ModeDlcs) 
     {
         pkgi_snprintf(text, sizeof(text), "Selected items: %d/%d", selected_items.size(), 32 - pkgi_list_dir_contents("ux0:bgdl/t").size());
-        pkgi_draw_text((VITA_WIDTH - pkgi_text_width(text)) / 2, bottom_y, PKGI_COLOR_TEXT_TAIL, text);
+        pkgi_draw_text((VITA_WIDTH - pkgi_text_width(text)) / 2, bottom_y, tail_status_color, text);
     }
     const auto second_line = bottom_y + font_height + PKGI_MAIN_ROW_PADDING;
 
@@ -1267,37 +1133,53 @@ void pkgi_do_tail(Downloader& downloader)
     int left = pkgi_text_width(text) + PKGI_MAIN_TEXT_PADDING;
     int right = rightw + PKGI_MAIN_TEXT_PADDING;
 
-    std::string bottom_text;
+    std::vector<TextSegment> bottom_segments;
     if (pkgi_overlay_is_open() || pkgi_dialog_is_open())
     {
-        bottom_text = fmt::format(
-                "{} select {} close", pkgi_get_ok_str(), pkgi_get_cancel_str());
+        append_button_segment(bottom_segments, pkgi_ok_button());
+        append_text_segment(bottom_segments, " select ");
+        append_button_segment(bottom_segments, pkgi_cancel_button());
+        append_text_segment(bottom_segments, " close");
     }
     else if (pkgi_menu_is_open())
     {
-        bottom_text = fmt::format(
-                "{} select  " PKGI_UTF8_T " close  {} cancel",
-                pkgi_get_ok_str(),
-                pkgi_get_cancel_str());
+        append_button_segment(bottom_segments, pkgi_ok_button());
+        append_text_segment(bottom_segments, " select  ");
+        append_button_segment(bottom_segments, PKGI_BUTTON_T);
+        append_text_segment(bottom_segments, " close  ");
+        append_button_segment(bottom_segments, pkgi_cancel_button());
+        append_text_segment(bottom_segments, " cancel");
     }
     else
     {
         if (mode == ModeGames || mode == ModePspGames)
         {
-            bottom_text += fmt::format("{} details ", pkgi_get_ok_str());
-            bottom_text += PKGI_UTF8_S " flag ";
+            append_button_segment(bottom_segments, pkgi_ok_button());
+            append_text_segment(bottom_segments, " details ");
         }
         else
         {
             DbItem* item = db->get(selected_item);
             if (item && item->presence == PresenceInstalling)
-                bottom_text += fmt::format("{} cancel ", pkgi_get_ok_str());
+            {
+                append_button_segment(bottom_segments, pkgi_ok_button());
+                append_text_segment(bottom_segments, " cancel ");
+            }
             else if (item && item->presence != PresenceInstalled)
-                bottom_text += fmt::format("{} install ", pkgi_get_ok_str());
+            {
+                append_button_segment(bottom_segments, pkgi_ok_button());
+                append_text_segment(bottom_segments, " install ");
+            }
         }
-        bottom_text += PKGI_UTF8_T " menu ";
+        append_button_segment(bottom_segments, PKGI_BUTTON_T);
+        append_text_segment(bottom_segments, " menu ");
         if (mode == ModeDlcs)
-            bottom_text += PKGI_UTF8_S " select";
+        {
+            append_button_segment(bottom_segments, PKGI_BUTTON_S);
+            append_text_segment(bottom_segments, " select ");
+        }
+        append_button_segment(bottom_segments, pkgi_cancel_button());
+        append_text_segment(bottom_segments, " home");
     }
 
     pkgi_clip_set(
@@ -1305,11 +1187,7 @@ void pkgi_do_tail(Downloader& downloader)
             second_line,
             VITA_WIDTH - right - left,
             VITA_HEIGHT - second_line);
-    pkgi_draw_text(
-            (VITA_WIDTH - pkgi_text_width(bottom_text.c_str())) / 2,
-            second_line,
-            PKGI_COLOR_TEXT_TAIL,
-            bottom_text.c_str());
+    draw_centered_segments(second_line, left, right, bottom_segments);
     pkgi_clip_remove();
 }
 
@@ -1346,26 +1224,11 @@ void reposition(void)
     }
 }
 
-void pkgi_apply_annotations()
-{
-    if (!annotation_db)
-        return;
-    for (uint32_t i = 0; i < db->count(); ++i)
-    {
-        auto* item = db->get(i);
-        if (!item) continue;
-        const auto ann = annotation_db->get(item->titleid);
-        item->user_flag    = ann.flag;
-        item->user_comment = ann.comment;
-    }
-}
-
 void pkgi_reload()
 {
     try
     {
         configure_db(db.get(), search_active ? search_text : NULL, &config);
-        pkgi_apply_annotations();
     }
     catch (const std::exception& e)
     {
@@ -1399,6 +1262,226 @@ void pkgi_open_db()
 
     pkgi_reload();
 }
+}
+
+// Deliberately defined OUTSIDE the anonymous namespace above: other
+// translation units (gridview.cpp) call these (declared in pkgi.hpp), and
+// anonymous-namespace members have internal linkage even without `static`,
+// so they'd be invisible to other TUs from inside it.
+const char* pkgi_get_ok_str(void)
+{
+    return pkgi_button_str(pkgi_ok_button());
+}
+
+const char* pkgi_get_cancel_str(void)
+{
+    return pkgi_button_str(pkgi_cancel_button());
+}
+
+const char* pkgi_button_str(uint32_t button)
+{
+    switch (button)
+    {
+    case PKGI_BUTTON_X:
+        return PKGI_UTF8_X;
+    case PKGI_BUTTON_O:
+        return PKGI_UTF8_O;
+    case PKGI_BUTTON_T:
+        return PKGI_UTF8_T;
+    case PKGI_BUTTON_S:
+        return PKGI_UTF8_S;
+    default:
+        return "";
+    }
+}
+
+uint32_t pkgi_button_color(uint32_t button)
+{
+    switch (button)
+    {
+    case PKGI_BUTTON_X:
+        return PKGI_COLOR_BUTTON_CROSS;
+    case PKGI_BUTTON_O:
+        return PKGI_COLOR_BUTTON_CIRCLE;
+    case PKGI_BUTTON_T:
+        return PKGI_COLOR_BUTTON_TRIANGLE;
+    case PKGI_BUTTON_S:
+        return PKGI_COLOR_BUTTON_SQUARE;
+    default:
+        return PKGI_COLOR_TEXT_TAIL;
+    }
+}
+
+// ── Alphabetical name-group jump (LT/RT) ────────────────────────────────────
+// db/pkgi_time_msec/pkgi_draw_rect/etc. stay reachable here via the implicit
+// using-directive the anonymous namespace injects.
+static bool pkgi_utf8_next_codepoint(
+        const std::string& text,
+        size_t& pos,
+        uint32_t& codepoint)
+{
+    if (pos >= text.size())
+        return false;
+
+    const unsigned char c = static_cast<unsigned char>(text[pos]);
+    if (c < 0x80)
+    {
+        codepoint = c;
+        pos += 1;
+        return true;
+    }
+    if ((c & 0xE0) == 0xC0 && pos + 1 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        codepoint = ((c & 0x1F) << 6) | (c1 & 0x3F);
+        pos += 2;
+        return true;
+    }
+    if ((c & 0xF0) == 0xE0 && pos + 2 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        const unsigned char c2 = static_cast<unsigned char>(text[pos + 2]);
+        codepoint = ((c & 0x0F) << 12) | ((c1 & 0x3F) << 6) |
+                    (c2 & 0x3F);
+        pos += 3;
+        return true;
+    }
+    if ((c & 0xF8) == 0xF0 && pos + 3 < text.size())
+    {
+        const unsigned char c1 = static_cast<unsigned char>(text[pos + 1]);
+        const unsigned char c2 = static_cast<unsigned char>(text[pos + 2]);
+        const unsigned char c3 = static_cast<unsigned char>(text[pos + 3]);
+        codepoint = ((c & 0x07) << 18) | ((c1 & 0x3F) << 12) |
+                    ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+        pos += 4;
+        return true;
+    }
+
+    // Invalid UTF-8 sequence, skip one byte.
+    pos += 1;
+    return false;
+}
+
+static bool pkgi_is_other_script(uint32_t c)
+{
+    // CJK and East Asian blocks.
+    if ((0x3040 <= c && c <= 0x30FF) ||  // Hiragana/Katakana
+        (0x31F0 <= c && c <= 0x31FF) ||  // Katakana Phonetic Extensions
+        (0x3400 <= c && c <= 0x4DBF) ||  // CJK Extension A
+        (0x4E00 <= c && c <= 0x9FFF) ||  // CJK Unified Ideographs
+        (0xF900 <= c && c <= 0xFAFF) ||  // CJK Compatibility Ideographs
+        (0xAC00 <= c && c <= 0xD7AF) ||  // Hangul Syllables
+        (0x1100 <= c && c <= 0x11FF) ||  // Hangul Jamo
+        (0x3130 <= c && c <= 0x318F) ||  // Hangul Compatibility Jamo
+        (0x20000 <= c && c <= 0x2FA1F) || // Additional CJK
+        (0x3000 <= c && c <= 0x303F))    // CJK Symbols and Punctuation
+        return true;
+    return false;
+}
+
+int pkgi_name_group(const std::string& name)
+{
+    size_t i = 0;
+    while (i < name.size() && std::isspace(static_cast<unsigned char>(name[i])))
+        ++i;
+
+    while (i < name.size())
+    {
+        uint32_t cp;
+        if (!pkgi_utf8_next_codepoint(name, i, cp))
+            continue;
+
+        if (cp < 0x80)
+        {
+            if (cp >= '0' && cp <= '9')
+                return 0;
+            if (cp == '@')
+                return 1;
+            if (cp >= 'A' && cp <= 'Z')
+                return static_cast<int>(cp - 'A') + 2;
+            if (cp >= 'a' && cp <= 'z')
+                return static_cast<int>(cp - 'a') + 2;
+            if (std::ispunct(static_cast<unsigned char>(cp)))
+                return 1;
+            if (std::isspace(static_cast<unsigned char>(cp)))
+                continue;
+            return 28;
+        }
+
+        if (pkgi_is_other_script(cp))
+            return 28;
+
+        // Non-ASCII non-CJK characters are treated as Other.
+        return 28;
+    }
+
+    return 28;
+}
+
+static const char* pkgi_group_label(int group)
+{
+    if (group == 0)
+        return "0-9";
+    if (group == 1)
+        return "@";
+    if (group >= 2 && group <= 27)
+    {
+        static char text[2] = "A";
+        text[0] = static_cast<char>('A' + group - 2);
+        return text;
+    }
+    return "Other";
+}
+
+int pkgi_next_group(int current, const bool present[PKGI_GROUP_COUNT], bool forward)
+{
+    if (current < 0 || current >= PKGI_GROUP_COUNT)
+        current = 0;
+
+    for (int step = 1; step < PKGI_GROUP_COUNT; ++step)
+    {
+        int idx = forward
+                ? (current + step) % PKGI_GROUP_COUNT
+                : (current + PKGI_GROUP_COUNT - step) % PKGI_GROUP_COUNT;
+        if (present[idx])
+            return idx;
+    }
+    return current;
+}
+
+uint32_t pkgi_first_item_with_group(int group)
+{
+    const uint32_t db_count = db ? db->count() : 0;
+    for (uint32_t i = 0; i < db_count; ++i)
+        if (pkgi_name_group(db->get(i)->name) == group)
+            return i;
+    return 0;
+}
+
+static std::string pkgi_group_overlay_text;
+static uint32_t pkgi_group_overlay_until = 0;
+
+void pkgi_set_group_overlay(int group)
+{
+    pkgi_group_overlay_text = pkgi_group_label(group);
+    pkgi_group_overlay_until = pkgi_time_msec() + 2000;
+}
+
+void pkgi_draw_group_overlay()
+{
+    if (!pkgi_group_overlay_text.empty() &&
+            pkgi_time_msec() < pkgi_group_overlay_until)
+    {
+        const float scale = 4.0f;
+        int w = static_cast<int>(pkgi_text_width(pkgi_group_overlay_text.c_str()) * scale);
+        int h = static_cast<int>(pkgi_text_height("M") * scale);
+        int text_top = (VITA_HEIGHT - h) / 2;
+        int x = (VITA_WIDTH - w) / 2;
+        int y = text_top;
+        pkgi_draw_rect(x - 12, text_top - 12, w + 24, h + 24, PKGI_COLOR_MENU_BACKGROUND);
+        const uint32_t overlay_color = (0x33u << 24) | PKGI_COLOR_TEXT_HEAD;
+        pkgi_draw_text_scale(x, y, overlay_color, pkgi_group_overlay_text.c_str(), scale);
+    }
 }
 
 void pkgi_create_psp_rif([[maybe_unused]] std::string contentid,
@@ -1443,7 +1526,7 @@ void pkgi_start_download(
 #ifndef PKGI_SIMULATOR
     sceIoMkdir("ux0:bgdl", 0777);
 #else
-    pkgi_mkdirs("pkgj/bgdl");
+    pkgi_mkdirs("usagi-pkgj/bgdl");
 #endif
 
     try
@@ -1538,7 +1621,7 @@ int main()
     {
         if (!pkgi_is_unsafe_mode())
             throw std::runtime_error(
-                    "PKGj requires unsafe mode to be enabled in HENkaku "
+                    "Usagi PKGj requires unsafe mode to be enabled in HENkaku "
                     "settings!");
 
         Downloader downloader;
@@ -1555,7 +1638,7 @@ int main()
             pkgi_dialog_error(("Download failure: " + error).c_str());
         };
 
-        LOG("PKGj started");
+        LOG("Usagi PKGj started");
 
         config = pkgi_load_config();
         pkgi_dialog_init();
@@ -1586,10 +1669,6 @@ int main()
                     }
                 });
 
-        annotation_db = std::make_unique<AnnotationDatabase>(
-                std::string(pkgi_get_config_folder()) + "/annotations.db");
-        pkgi_apply_annotations();
-
 #ifdef PKGI_SIMULATOR
         pkgi_texture background = nullptr; // no embedded assets in simulator
 #else
@@ -1608,20 +1687,38 @@ int main()
         uint32_t* pixels = NULL;
         int width, height;
 #ifndef PKGI_SIMULATOR
+        auto build_imgui_ranges =
+                [](const ImWchar* base_ranges, ImVector<ImWchar>& ranges)
+        {
+            ImFontGlyphRangesBuilder builder;
+            builder.AddRanges(base_ranges);
+            builder.AddChar(0x2573); // cross
+            builder.AddChar(0x25CB); // circle
+            builder.AddChar(0x25B3); // triangle
+            builder.AddChar(0x25A1); // square
+            builder.BuildRanges(&ranges);
+        };
+
+        ImVector<ImWchar> latin_ranges;
+        ImVector<ImWchar> japanese_ranges;
+        build_imgui_ranges(io.Fonts->GetGlyphRangesDefault(), latin_ranges);
         if (!io.Fonts->AddFontFromFileTTF(
                     "sa0:/data/font/pvf/ltn0.pvf",
                     20.0f,
                     0,
-                    io.Fonts->GetGlyphRangesDefault()))
+                    latin_ranges.Data))
             throw std::runtime_error("failed to load ltn0.pvf");
         {
             ImFontConfig merge_cfg;
             merge_cfg.MergeMode = true;
+            build_imgui_ranges(
+                    io.Fonts->GetGlyphRangesJapanese(),
+                    japanese_ranges);
             io.Fonts->AddFontFromFileTTF(
                     "sa0:/data/font/pvf/jpn0.pvf",
                     20.0f,
                     &merge_cfg,
-                    io.Fonts->GetGlyphRangesJapanese());
+                    japanese_ranges.Data);
         }
 #endif
         io.Fonts->GetTexDataAsRGBA32((uint8_t**)&pixels, &width, &height);
@@ -1644,6 +1741,7 @@ int main()
         init_imgui();
 
         pkgi_input input;
+        bool grid_active_last_frame = false;
         while (pkgi_update(&input))
         {
             ImGuiIO& io = ImGui::GetIO();
@@ -1651,7 +1749,7 @@ int main()
             io.DisplaySize.x = VITA_WIDTH;
             io.DisplaySize.y = VITA_HEIGHT;
 
-            // Snapshot for log viewer (needs raw input BEFORE zeroing)
+            // Snapshot for overlays that need raw input before it is consumed.
             const pkgi_input input_snapshot = input;
 
             const bool has_imgui_overlay =
@@ -1680,6 +1778,12 @@ int main()
                 }
 
                 // Universal cancel / save handlers (read pressed before zeroing)
+                if (gameview && !pkgi_dialog_is_open() &&
+                        !(input.pressed & pkgi_cancel_button()))
+                {
+                    gameview->update(input_snapshot);
+                }
+
                 if (input.pressed & pkgi_cancel_button())
                 {
                     if (gameview)
@@ -1727,6 +1831,20 @@ int main()
 
             pkgi_draw_texture(background, 0, 0);
 
+            // Grid view caches a per-visible-cell download/decode state
+            // (not the displayed textures — see GridTexturePool); drop it
+            // as soon as the grid stops being the active renderer (mode
+            // switch, toggling grid off, leaving StateMain via cancel)
+            // instead of waiting for a sync() call that may never come for
+            // an inactive screen.
+            {
+                const bool grid_active_now = state == StateMain &&
+                        config.grid_view && pkgi_grid_supported_mode(mode);
+                if (!grid_active_now && grid_active_last_frame)
+                    pkgi_grid_deactivate();
+                grid_active_last_frame = grid_active_now;
+            }
+
             // Browse view renders its own header/footer; skip pkgi_do_head()
             // in that state to avoid a conflicting title bar.
             if (state != StateBrowse)
@@ -1751,10 +1869,30 @@ int main()
                 break;
 
             case StateMain:
-                pkgi_do_main(
-                        downloader,
+            {
+                pkgi_input* main_input =
                         pkgi_dialog_is_open() || pkgi_menu_is_open() ? NULL
-                                                                     : &input);
+                                                                      : &input;
+                if (config.grid_view && pkgi_grid_supported_mode(mode))
+                {
+                    GridResult gr = pkgi_do_main_grid(
+                            *db,
+                            config,
+                            main_input,
+                            first_item,
+                            selected_item,
+                            font_height,
+                            avail_height,
+                            mode);
+                    if (gr.item_activated)
+                        pkgi_open_gameview_for_selected(downloader);
+                    if (gr.open_menu_requested)
+                        pkgi_open_options_menu();
+                }
+                else
+                {
+                    pkgi_do_main(downloader, main_input);
+                }
                 // Allow returning to the category tree with the cancel button
                 // when no overlay is active.
                 if (!pkgi_overlay_is_open() && !pkgi_dialog_is_open() &&
@@ -1765,6 +1903,7 @@ int main()
                     input.pressed &= ~pkgi_cancel_button();
                 }
                 break;
+            }
             }
 
             // Browse view draws its own footer; skip the game-list tail.
@@ -1825,6 +1964,18 @@ int main()
                 configure_db(db.get(), search_text, &config);
                 reposition();
             }
+
+            // Submit this frame's ImGui draw data (grid cover images,
+            // gameview, dialogs, ...) BEFORE the menu draws. The menu is
+            // still raw vita2d (pkgi_draw_rect/pkgi_draw_text, immediate),
+            // while ImGui batches everything and only actually reaches the
+            // GPU command stream here — submitting after the menu would
+            // always paint ImGui content on top of it regardless of call
+            // order elsewhere in the frame, hiding the menu behind e.g. the
+            // grid's cover images.
+            ImGui::EndFrame();
+            ImGui::Render();
+            pkgi_imgui_render(ImGui::GetDrawData());
 
             if (pkgi_menu_is_open())
             {
@@ -1915,11 +2066,6 @@ int main()
                 }
             }
 
-            ImGui::EndFrame();
-            ImGui::Render();
-
-            pkgi_imgui_render(ImGui::GetDrawData());
-
             pkgi_swap();
         }
     }
@@ -1940,6 +2086,6 @@ int main()
         pkgi_end();
     }
 
-    LOG("PKGj shutting down");
+    LOG("Usagi PKGj shutting down");
     pkgi_end();
 }

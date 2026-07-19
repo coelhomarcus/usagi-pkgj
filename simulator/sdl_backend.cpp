@@ -28,6 +28,8 @@ extern "C"
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_ttf.h>
 
+#include <curl/curl.h>
+
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -240,6 +242,12 @@ void pkgi_start(void)
 
     // Scale renderer output to always match 960×544 logical size
     SDL_RenderSetLogicalSize(g_sdl_renderer, VITA_WIDTH, VITA_HEIGHT);
+
+    // Must happen once, before any thread touches libcurl (WorkerPool's
+    // cover-fetch threads, VitaHttp's package-download thread) — curl_easy_init()
+    // auto-inits lazily otherwise, and libcurl explicitly documents that
+    // implicit init as not thread-safe. Mirrors src/vita.cpp's real-Vita init.
+    curl_global_init(CURL_GLOBAL_ALL);
 
     g_font = load_best_font(17);
 
@@ -470,6 +478,14 @@ void pkgi_draw_texture(pkgi_texture texture, int x, int y)
     SDL_RenderCopy(g_sdl_renderer, tex, nullptr, &dst);
 }
 
+void pkgi_draw_texture_scaled(pkgi_texture texture, int x, int y, int w, int h)
+{
+    if (!texture) return;
+    SDL_Texture* tex = static_cast<SDL_Texture*>(texture);
+    const SDL_Rect dst{x, y, w, h};
+    SDL_RenderCopy(g_sdl_renderer, tex, nullptr, &dst);
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // ImGui font texture creation (called from sim_main.cpp)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -563,7 +579,7 @@ uint64_t pkgi_get_free_space(const char* path)
 
 const char* pkgi_get_config_folder(void)
 {
-    static const char* folder = "pkgj";
+    static const char* folder = "usagi-pkgj";
     // Ensure the folder exists
     mkdir(folder, 0755);
     return folder;
@@ -573,7 +589,7 @@ int pkgi_is_incomplete(const char* partition, const char* contentid)
 {
     (void)partition;
     return pkgi_file_exists(
-            fmt::format("pkgj/{}.resume", contentid).c_str());
+            fmt::format("usagi-pkgj/{}.resume", contentid).c_str());
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

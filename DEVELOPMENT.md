@@ -1,4 +1,4 @@
-# PKGj — Developer Guide (toaster-code/pkgj fork)
+# Usagi PKGj — Developer Guide
 
 This document covers: what changed in this fork, how to build, how to test via the CLI simulator, and how to generate the final Vita binary (`.vpk`).
 
@@ -7,7 +7,7 @@ This document covers: what changed in this fork, how to build, how to test via t
 ## Table of Contents
 
 1. [What was changed and why](#1-what-was-changed-and-why)
-2. [New feature: Personal Annotations & Flags](#2-new-feature-personal-annotations--flags)
+2. [Feature: cover-art grid view](#2-feature-cover-art-grid-view)
 3. [How to build (CLI / host simulator)](#3-how-to-build-cli--host-simulator)
 4. [Testing with the CLI simulator](#4-testing-with-the-cli-simulator)
 5. [How to generate the Vita binary](#5-how-to-generate-the-vita-binary)
@@ -17,53 +17,38 @@ This document covers: what changed in this fork, how to build, how to test via t
 
 ## 1. What was changed and why
 
-This fork extends the original [blastrock/pkgj](https://github.com/blastrock/pkgj) with a **personal annotation system** that lets users attach a personal flag (e.g. "Broken", "Favorite", "Completed") and a free-text comment to any title in the list — directly from the GameView — without modifying any existing database.
+Usagi PKGj is a fork of [blastrock/pkgj](https://github.com/blastrock/pkgj). Its main addition is a **cover-art grid view** for the PS Vita games list: an alternative to the plain-text list, showing each game's box art in a scrollable grid. Covers are fetched on demand and cached locally, with an optional one-time bulk sync for players who'd rather not see them pop in while scrolling.
 
-The original application had no way to track personal notes about a game. The change adds this capability in a **non-breaking** way: a new SQLite file is created alongside the existing databases, and all existing data is untouched.
+This fork also removes a few features that existed on top of upstream at various points (personal annotations/flags, per-title comments, in-game screenshots, the GameView PS Store description panel) to keep the game detail screen focused and its focus/navigation model simpler — GameView now goes straight to "Install Game" instead of requiring a left/right panel pick first.
 
 ---
 
-## 2. New feature: Personal Annotations & Flags
+## 2. Feature: cover-art grid view
 
 ### What it does
 
-- In the **title list**, any item with a flag set shows a short ASCII symbol prefix next to the name:
+- Toggle **"Grid view (games)"** in the triangle options menu to switch the PS Vita games list between the classic text list and a cover-art grid (4 columns × 2 rows per page).
+- Selecting a cell and pressing X opens the same GameView detail screen the list uses.
+- Triangle still opens the options menu from the grid; L1/R1 still jump alphabetically by name group, same as the list.
 
-  | Symbol | Meaning       |
-  |--------|---------------|
-  | `[*]`  | Favorite      |
-  | `[++]` | Very Good     |
-  | `[+]`  | Good          |
-  | `[-]`  | Bad           |
-  | `[--]` | Very Bad      |
-  | `[X]`  | Broken        |
-  | `[/]`  | Completed     |
-  | `[?]`  | Want to Play  |
+### Where covers come from
 
-- In the **GameView** (opened by pressing O/X on a game), a new **"Personal Notes"** section appears at the bottom of the window with:
-  - **Flag picker** — one button per flag value; the active one is highlighted in green.
-  - **Comment field** — multi-line free-text input.
-  - **Save Notes** button — writes flag + comment to the database, immediately updates the list row.
-  - **Clear Notes** button — removes the annotation entirely.
+Implemented in `ImageFetcher` (`src/imagefetcher.{hpp,cpp}`), shared by GameView (single cover) and the grid (one fetcher per visible cell). For each title it tries an ordered list of sources, falling back on a 404/failure:
 
-### Where data is stored
+1. **[HexFlow-Covers](https://github.com/Andiweli/HexFlow-Covers)** — vertical PS Vita box art (PNG), the default source.
+2. **PlayStation Store** — JPEG cover, used as a fallback for titles HexFlow doesn't have.
 
-Annotations are stored in:
-```
-ux0:data/pkgj/annotations.db       (on Vita)
-<configFolder>/annotations.db      (in simulator)
-```
+Downloads run through a small global `WorkerPool` (`src/workerpool.hpp`, 3 slots) — up to 3 covers download concurrently, on-device or in the simulator — and are cached to disk (`thumbnail_folder`, default `ux0:usagi-pkgj/cover`) so a title's cover is only ever fetched once. The pool de-duplicates by task_id across all slots, since the same cover can be wanted by two independent `ImageFetcher`s at once (e.g. the grid and GameView, for a title visible in both).
 
-This is a standard SQLite3 file with one table:
-```sql
-CREATE TABLE annotations (
-    titleid TEXT PRIMARY KEY NOT NULL,
-    flag    INTEGER NOT NULL DEFAULT 0,
-    comment TEXT    NOT NULL DEFAULT ''
-);
-```
+### Cover texture pool
 
-Annotations survive database refreshes and app restarts. The file is created automatically on first launch.
+The grid's cover art is backed by a fixed pool of 24 persistent texture slots (`GridTexturePool`, `src/gridtexturepool.{hpp,cpp}`, 256x320 each, ~7.5MB total) that are allocated lazily and never individually freed during the session. A cover is displayed by decoding it into a plain pixel buffer (`ImageFetcher::take_decoded_cover()`) and copying those pixels into a slot's existing texture — the texture object and its GPU memory never change, only the content does, reused LRU once all 24 slots are in use.
+
+This exists because giving each visible cell its own texture (created on scroll-in, freed on scroll-out) crashed Vita3K: its Vulkan backend syncs a texture's memory to the GPU lazily, on an async render thread, so a texture freed shortly after being drawn could still have a queued-but-unexecuted upload command pointing at memory that's already gone. Never freeing the *displayed* textures at all removes that failure mode structurally instead of trying to time around it. `GridImageCache` (`src/gridview.cpp`) still keeps a per-visible-cell `ImageFetcher` for download/decode coordination, evicted immediately (no cooldown needed) as cells scroll off-screen — it never owns a lasting texture, so its lifetime is unrelated to the pool's.
+
+### Placeholder art
+
+Cells without a cached cover yet show `assets/covers/loading.png` (while fetching) or `assets/covers/noimage.png` (fetch failed / no source has this title) instead of a plain colored box. Embedded into the `.vpk` the same way as every other bundled Vita UI asset (see `cross.cmake`'s `add_assets`); the host simulator has no such embedding step and falls back to a plain rect+text placeholder there.
 
 ---
 
@@ -111,6 +96,8 @@ The resulting binary is at `ci/buildhost/pkgj_cli`.
 > ```bash
 > cd ci/buildhost && source conanbuild.sh && cmake --build . --target pkgj_cli
 > ```
+>
+> To also build the graphical simulator (`pkgj_sim`, needs `libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl-dev`), add `-DBUILD_SIM=ON` when invoking cmake directly against `ci/buildhost` (see `host.cmake`).
 
 ---
 
@@ -155,6 +142,8 @@ The Sly Trilogy: 3526375296
 ...
 Persona 4: The Golden (PlayStation Vita the Best): 3335541664
 ```
+
+> Note: `TitleDatabase::reload()`, used by the app itself (and by the grid/GameView cover lookups), expects the TSV's rows to be CRLF-terminated — matches the format community title databases ship in. LF-only test fixtures will parse as a single row.
 
 ---
 
@@ -210,6 +199,8 @@ tmp/data.bin
 
 - [VitaSDK](https://vitasdk.org/) installed — see install steps below
 - VitaSDK in PATH: `export VITASDK=~/vitasdk && export PATH=$VITASDK/bin:$PATH`
+
+> VitaSDK's prebuilt packages are x86_64-only. On Apple Silicon / arm64 Linux you'll need x86_64 emulation (Rosetta on macOS, QEMU on Linux) to run the toolchain — the GitHub Actions workflow (`.github/workflows/build.yml`) builds natively on x86_64 and is the easiest way to get a `.vpk` without local emulation.
 
 ### Install VitaSDK (if not present)
 
@@ -276,14 +267,14 @@ Output files in `ci/build/`:
 | File | Description |
 |------|-------------|
 | `eboot.bin` | Signed SELF — the actual executable loaded by the Vita |
-| `pkgj.vpk` | Full installable package (includes `eboot.bin` + Live Area assets) |
+| `UsagiPKGJ.vpk` | Full installable package (includes `eboot.bin` + Live Area assets) |
 | `pkgj.elf` | Unsigned ELF — useful for debugging with `gdb` or disassembly |
 
 ### Install on Vita via FTP
 
 ```bash
 # With VitaShell FTP running on the Vita at $PSVITAIP:1337
-curl -T ci/build/eboot.bin ftp://$PSVITAIP:1337/ux0:/app/PKGJ00000/
+curl -T ci/build/eboot.bin ftp://$PSVITAIP:1337/ux0:/app/USAG00001/
 ```
 
 Or use the provided CMake target (builds and sends in one step):
@@ -292,21 +283,24 @@ cd ci/build
 PSVITAIP=192.168.1.x cmake --build . --target send
 ```
 
+### GitHub Actions
+
+`.github/workflows/build.yml` runs on every push: builds `pkgj_cli` and `UsagiPKGJ.vpk` on a native x86_64 Ubuntu runner and uploads both as workflow artifacts (Actions tab → the run → **Artifacts**). `.github/workflows/release.yml` publishes `UsagiPKGJ.vpk` as a GitHub release when a version tag is pushed. Actions is disabled by default on forks — enable it once under the repo's Actions tab before pushing.
+
 ---
 
 ## 6. File change summary
 
-| File | Type | Description |
-|------|------|-------------|
-| `src/annotationdb.hpp` | **New** | `UserFlag` enum, `UserAnnotation` struct, `AnnotationDatabase` class declaration |
-| `src/annotationdb.cpp` | **New** | SQLite CRUD: opens/creates `annotations.db`, implements `get()`, `set()`, `remove()` |
-| `src/db.hpp` | **Modified** | Added `#include "annotationdb.hpp"`; added `user_flag` and `user_comment` fields to `DbItem` struct |
-| `src/db.cpp` | **Modified** | Explicit initialization of new `DbItem` fields in `reload()` to silence compiler warnings |
-| `src/gameview.hpp` | **Modified** | Added `AnnotationDatabase*` to constructor; added private members `_annotationDb`, `_annotation`, `_comment_buf[512]`, `_annotation_dirty` |
-| `src/gameview.cpp` | **Modified** | Constructor loads saved annotation into working copy; new **Personal Notes** UI section in `render()` |
-| `src/pkgi.cpp` | **Modified** | Added `annotation_db` global; `pkgi_apply_annotations()` called after every `configure_db()`; flag symbol prefix in list draw loop; `annotation_db` passed to `GameView` constructor; forward declaration of `pkgi_apply_annotations()` added for strict compiler compatibility |
-| `src/workerpool.hpp` | **New** | Added single global worker slot abstraction; `try_submit(task_id, fn)` avoids duplicate/parallel fetch tasks |
-| `src/imagefetcher.hpp` | **Modified** | Reworked to use `WorkerSlot::image_worker()`, state machine via `_submitted`, `_result`, and `ImageFetchResult` instead of per-instance thread + mutex/abort |
-| `src/imagefetcher.cpp` | **Modified** | `ImageFetcher::_try_submit()` submits network+disk work to worker slot; `get_status()` and `get_texture()` process result asynchronously and safely on main thread |
-| `cross.cmake` | **Modified** | Added `src/annotationdb.cpp` to the Vita executable source list |
-| `host.cmake` | **Modified** | Added `src/annotationdb.cpp` to the `pkgj_cli` source list |
+Non-exhaustive list of what differs from [blastrock/pkgj](https://github.com/blastrock/pkgj):
+
+| Area | Files | Description |
+|------|-------|-------------|
+| Grid view | `src/gridview.{hpp,cpp}` (new) | Cover-art grid rendering, input, and per-visible-cell download/decode coordination (`GridImageCache`) for `ModeGames`/`ModePspGames`/`ModePsxGames`, default-on |
+| Cover texture pool | `src/gridtexturepool.{hpp,cpp}` (new) | Fixed pool of 24 persistent, never-individually-freed texture slots the grid blits decoded covers into — see "Cover texture pool" above |
+| Cover fetching | `src/imagefetcher.{hpp,cpp}` | Reworked to try an ordered list of sources per title (HexFlow PNG → PS Store JPEG fallback) instead of a single URL, mode-aware HexFlow folder (PSVita/PSP/PS1); PNG decode goes through `vita2d_load_PNG_buffer`. `take_decoded_cover()` decodes to a plain pixel buffer for the texture pool; `get_texture()` (GameView only) is unchanged |
+| Cover/flag assets | `assets/covers/*.png`, `assets/flags/*.png` | Grid/GameView placeholder art per content type (Vita/PSP vertical, PSX square) and region flag badges, embedded like other bundled UI assets |
+| Config | `src/config.{hpp,cpp}` | Added `grid_view` |
+| Menu | `src/menu.{hpp,cpp}` | Added "Grid view (games)" toggle |
+| Main loop | `src/pkgi.{hpp,cpp}` | Dispatches to the grid or list renderer based on `config.grid_view`; alphabetical name-group-jump helpers and the OK/cancel button-label helpers moved out of the file's anonymous namespace so other translation units can call them |
+| GameView | `src/gameview.{hpp,cpp}` | Removed the PS Store description panel and the View→Panel→SubItem focus hierarchy (the left cover column has nothing interactive left to "enter"); opening the view now focuses "Install Game" directly |
+| Removed | `src/annotationdb.{hpp,cpp}`, `src/screenshotfetcher.{hpp,cpp}`, `src/descriptionfetcher.{hpp,cpp}` | Personal flags/comments, GameView screenshot strip, and PS Store description — all dropped |

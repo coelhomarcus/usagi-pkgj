@@ -240,7 +240,7 @@ Config pkgi_load_config()
     try
     {
         Config config{};
-        config.no_version_check = 0;  // update check enabled: points to toaster-code/pkgj
+        config.no_version_check = 0;  // update check enabled: points to coelhomarcus/usagi-pkgj
 
         config.games_url = default_psv_games_url;
         config.dlcs_url = default_psv_dlcs_url;
@@ -251,7 +251,6 @@ Config pkgi_load_config()
         config.psp_games_url = default_psp_games_url;
         config.psp_dlcs_url = default_psp_dlcs_url;
         config.comppack_url = default_comppack_url;
-        config.thumbnail_url = "";
         config.thumbnail_folder = "";
         config.thumbnail_size = 2;
         config.sort = SortByName;
@@ -328,13 +327,13 @@ Config pkgi_load_config()
                 config.psp_dlcs_url = value;
             else if (pkgi_stricmp(key, "url_comppack") == 0)
                 config.comppack_url = value;
-            else if (pkgi_stricmp(key, "thumbnail_url") == 0)
-                config.thumbnail_url = value;
             else if (pkgi_stricmp(key, "thumbnail_folder") == 0)
                 config.thumbnail_folder = value;
             else if (pkgi_stricmp(key, "thumbnail_size") == 0)
                 config.thumbnail_size = static_cast<int>(
                         std::strtol(value, nullptr, 10));
+            else if (pkgi_stricmp(key, "grid_view") == 0)
+                config.grid_view = (pkgi_stricmp(value, "0") != 0);
             else if (pkgi_stricmp(key, "sort") == 0)
                 config.sort = parse_sort(value, SortByName);
             else if (pkgi_stricmp(key, "order") == 0)
@@ -419,12 +418,6 @@ void pkgi_save_config(const Config& config)
                 entry.name.c_str(),
                 entry.url.c_str());
     }
-    if (!config.thumbnail_url.empty())
-        len += pkgi_snprintf(
-                data + len,
-                sizeof(data) - len,
-                "thumbnail_url %s\n",
-                config.thumbnail_url.c_str());
     if (!config.thumbnail_folder.empty())
         len += pkgi_snprintf(
                 data + len,
@@ -436,6 +429,9 @@ void pkgi_save_config(const Config& config)
             sizeof(data) - len,
             "thumbnail_size %d\n",
             config.thumbnail_size);
+    if (!config.grid_view)
+        len += pkgi_snprintf(
+                data + len, sizeof(data) - len, "grid_view 0\n");
     if (!config.install_psp_psx_location.empty())
         len += pkgi_snprintf(
                 data + len,

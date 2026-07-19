@@ -15,7 +15,7 @@ permissions:
 jobs:
   # ── PS Vita build ────────────────────────────────────────────────────────────
   build-vita:
-    name: Build PS Vita (pkgj.vpk)
+    name: Build PS Vita (UsagiPKGJ.vpk)
     runs-on: ubuntu-24.04
 
     steps:
@@ -38,7 +38,7 @@ jobs:
           key: conan-vita-${{ runner.os }}-${{ hashFiles('ci/conan-vitasdk/conanfile.py', 'ci/conan-fmt/conanfile.py', 'ci/conan-libzip/conanfile.py', 'ci/conan-vitasqlite/conanfile.py', 'conanfile.py') }}
           restore-keys: conan-vita-${{ runner.os }}-
 
-      - name: Build pkgj.vpk
+      - name: Build UsagiPKGJ.vpk
         env:
           CC: gcc-12
           CXX: g++-12
@@ -56,11 +56,11 @@ jobs:
             --profile:host vita \
             --output-folder .
 
-      - name: Upload pkgj.vpk
+      - name: Upload UsagiPKGJ.vpk
         uses: actions/upload-artifact@v4
         with:
-          name: pkgj-vita
-          path: ci/build/pkgj.vpk
+          name: usagi-pkgj-vita
+          path: ci/build/UsagiPKGJ.vpk
           if-no-files-found: error
 
   # ── Host build (CLI + graphical simulator) ───────────────────────────────────
@@ -156,6 +156,6 @@ jobs:
             --title "Release $TAG" \
             --generate-notes \
             $PRERELEASE_FLAG \
-            "pkgj-vita/pkgj.vpk#pkgj-${TAG}.vpk" \
+            "usagi-pkgj-vita/UsagiPKGJ.vpk#UsagiPKGJ-${TAG}.vpk" \
             "pkgj-cli/pkgj_cli#pkgj_cli-${TAG}" \
             "pkgj-sim/pkgj_sim#pkgj_sim-${TAG}"

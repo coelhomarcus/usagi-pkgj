@@ -54,6 +54,10 @@ int pkgi_is_unsafe_mode(void);
 
 int pkgi_ok_button(void);
 int pkgi_cancel_button(void);
+const char* pkgi_button_str(uint32_t button);
+uint32_t pkgi_button_color(uint32_t button);
+const char* pkgi_get_ok_str(void);
+const char* pkgi_get_cancel_str(void);
 
 void pkgi_start(void);
 int pkgi_update(pkgi_input* input);
@@ -107,6 +111,10 @@ typedef void* pkgi_texture;
 
 pkgi_texture pkgi_load_png_raw(const void* data, uint32_t size);
 void pkgi_draw_texture(pkgi_texture texture, int x, int y);
+// Like pkgi_draw_texture, but scaled to an exact w x h box regardless of
+// the texture's native size — used for the region-flag badges, whose
+// embedded resolution doesn't necessarily match a text row's height.
+void pkgi_draw_texture_scaled(pkgi_texture texture, int x, int y, int w, int h);
 
 void pkgi_clip_set(int x, int y, int w, int h);
 void pkgi_clip_remove(void);
@@ -115,6 +123,14 @@ void pkgi_draw_text(int x, int y, uint32_t color, const char* text);
 void pkgi_draw_text_scale(int x, int y, uint32_t color, const char* text, float scale);
 int pkgi_text_width(const char* text);
 int pkgi_text_height(const char* text);
+
+// Alphabetical name-group jump (LT/RT), also used by the grid view.
+constexpr int PKGI_GROUP_COUNT = 29;
+int pkgi_name_group(const std::string& name);
+int pkgi_next_group(int current, const bool present[PKGI_GROUP_COUNT], bool forward);
+uint32_t pkgi_first_item_with_group(int group);
+void pkgi_set_group_overlay(int group);
+void pkgi_draw_group_overlay();
 
 class Downloader;
 struct DbItem;

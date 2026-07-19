@@ -17,6 +17,7 @@ extern "C"
 #include <boost/scope_exit.hpp>
 
 #include <string>
+#include <stdexcept>
 #include <vita2d.h>
 
 #include <psp2/appmgr.h>
@@ -48,6 +49,7 @@ extern "C"
 #include <fcntl.h>
 #include <errno.h>
 #include <curl/curl.h>
+#include <openssl/crypto.h>
 
 extern "C"
 {
@@ -518,6 +520,82 @@ void pkgi_dialog_input_get_text(char* text, uint32_t size)
     text[count] = 0;
 }
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+// VitaSDK ships OpenSSL 1.0.x, whose libcrypto is NOT thread-safe unless
+// the application registers locking callbacks — without them, concurrent
+// TLS transfers race on the RNG's global state and trip its built-in
+// missing-locks guard, assert(md_c[1] == md_count[1]) in md_rand.c's
+// ssleay_rand_add, aborting the whole app. This stayed latent while cover
+// downloads ran strictly one at a time; WorkerPool running up to 3
+// concurrent CurlHttp transfers (plus the startup update-check thread)
+// made it fire within seconds of fast grid scrolling — observed on Vita3K
+// as the TTY assert message followed by cascading heap-corruption-style
+// crashes as abort() unwound. OpenSSL 1.1+ is internally thread-safe and
+// turned these callbacks into no-ops, hence the version guard.
+namespace
+{
+SceKernelLwMutexWork* g_openssl_locks = nullptr;
+int g_openssl_lock_count = 0;
+
+void pkgi_openssl_lock_cb(int mode, int n, const char*, int)
+{
+    if (!g_openssl_locks || n < 0 || n >= g_openssl_lock_count)
+    {
+        LOG_ERR("openssl lock callback received invalid lock index: %d", n);
+        __builtin_trap();
+    }
+
+    if (mode & CRYPTO_LOCK)
+        sceKernelLockLwMutex(&g_openssl_locks[n], 1, nullptr);
+    else
+        sceKernelUnlockLwMutex(&g_openssl_locks[n], 1);
+}
+
+void pkgi_openssl_threadid_cb(CRYPTO_THREADID* id)
+{
+    CRYPTO_THREADID_set_numeric(
+            id, static_cast<unsigned long>(sceKernelGetThreadId()));
+}
+
+void pkgi_openssl_init_locks()
+{
+    const int count = CRYPTO_num_locks();
+    g_openssl_lock_count = count;
+    // Lives for the whole process — OpenSSL may take these locks from any
+    // thread at any point until exit, so they are deliberately never freed.
+    // Zero-initialized (the () — matters: SceKernelLwMutexWork is a plain
+    // struct, so a bare `new[]` would leave every element as uninitialized
+    // garbage until sceKernelCreateLwMutex fills it in below).
+    g_openssl_locks = new SceKernelLwMutexWork[count]();
+    for (int i = 0; i < count; ++i)
+    {
+        // Each lock MUST get a distinct name: Vita kernel object names are
+        // not just debug labels, they're looked up by name internally, so
+        // every lock past the first sharing the literal string
+        // "openssl_lock" failed to actually create, leaving
+        // g_openssl_locks[i] as the zero/garbage struct above — which then
+        // got handed straight into the sceKernelLockLwMutex syscall by
+        // pkgi_openssl_lock_cb. That's what was crashing the img_worker
+        // threads (inside call_import) once 3 of them started actually
+        // contending on these locks concurrently.
+        const auto res = sceKernelCreateLwMutex(
+                &g_openssl_locks[i],
+                fmt::format("ssl_lock_{}", i).c_str(),
+                0,
+                0,
+                nullptr);
+        if (res < 0)
+        {
+            LOG_ERR("openssl lock %d creation failed: err=0x%08x", i, res);
+            throw std::runtime_error("OpenSSL lock creation failed");
+        }
+    }
+    CRYPTO_THREADID_set_callback(pkgi_openssl_threadid_cb);
+    CRYPTO_set_locking_callback(pkgi_openssl_lock_cb);
+}
+}
+#endif
+
 void pkgi_start(void)
 {
     pkgi_load_sce_paf();
@@ -545,6 +623,11 @@ void pkgi_start(void)
     sceHttpInit(1024 * 1024);
     LOG("Initializing cURL");
     curl_global_init(CURL_GLOBAL_ALL);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    // Must be in place before any thread can start a TLS transfer —
+    // see pkgi_openssl_init_locks above.
+    pkgi_openssl_init_locks();
+#endif
     LOG("Network stack initialized");
 
     sceHttpsDisableOption(SCE_HTTPS_FLAG_SERVER_VERIFY);
@@ -733,22 +816,20 @@ const char* pkgi_get_config_folder()
     {
     }
 #define CHECK_FOLDER(f) else if (pkgi_file_exists(f "/config.txt")) return f
-    CHECK_FOLDER("ur0:pkgj");
-    CHECK_FOLDER("ux0:pkgj");
-    CHECK_FOLDER("ur0:pkgi");
-    CHECK_FOLDER("ux0:pkgi");
+    CHECK_FOLDER("ur0:usagi-pkgj");
+    CHECK_FOLDER("ux0:usagi-pkgj");
 #undef CHECK_FOLDER
     else
     {
-        pkgi_mkdirs("ux0:pkgj");
-        return "ux0:pkgj";
+        pkgi_mkdirs("ux0:usagi-pkgj");
+        return "ux0:usagi-pkgj";
     }
 }
 
 int pkgi_is_incomplete(const char* partition, const char* contentid)
 {
     return pkgi_file_exists(
-            fmt::format("{}pkgj/{}.resume", partition, contentid).c_str());
+            fmt::format("{}usagi-pkgj/{}.resume", partition, contentid).c_str());
 }
 
 void pkgi_delete_dir(const std::string& path)
@@ -877,6 +958,19 @@ void pkgi_draw_texture(pkgi_texture texture, int x, int y)
 {
     vita2d_texture* tex = static_cast<vita2d_texture*>(texture);
     vita2d_draw_texture(tex, (float)x, (float)y);
+}
+
+void pkgi_draw_texture_scaled(pkgi_texture texture, int x, int y, int w, int h)
+{
+    vita2d_texture* tex = static_cast<vita2d_texture*>(texture);
+    if (!tex)
+        return;
+    const float tw = (float)vita2d_texture_get_width(tex);
+    const float th = (float)vita2d_texture_get_height(tex);
+    if (tw <= 0 || th <= 0)
+        return;
+    vita2d_draw_texture_scale(
+            tex, (float)x, (float)y, (float)w / tw, (float)h / th);
 }
 
 void pkgi_clip_set(int x, int y, int w, int h)

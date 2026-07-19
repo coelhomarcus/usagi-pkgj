@@ -95,7 +95,7 @@ void FileDownload::download(
         const std::string& titleid,
         const std::string& url)
 {
-    root = fmt::format("{}pkgj/{}-comp.ppk", partition, titleid);
+    root = fmt::format("{}usagi-pkgj/{}-comp.ppk", partition, titleid);
     LOGF("temp installation folder: {}", root);
 
     download_size = 0;

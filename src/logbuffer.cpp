@@ -24,7 +24,11 @@ void pkgi_log_buffer_append(LogLevel level, const char* line)
         text.pop_back();
     }
 
-    // Prepend HH:MM:SS [LEVL] timestamp from system clock
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+
+    // Prepend HH:MM:SS [LEVL] timestamp from system clock. std::localtime()
+    // returns a pointer to static storage, so keep it under the same lock as
+    // the log buffer.
     char ts[10];
     std::time_t now = std::time(nullptr);
     std::tm* tm_now = std::localtime(&now);
@@ -34,7 +38,6 @@ void pkgi_log_buffer_append(LogLevel level, const char* line)
                     :                            "INFO";
     text = std::string(ts) + " [" + lvl + "] " + text;
 
-    std::lock_guard<std::mutex> lock(g_log_mutex);
     g_log_lines.push_back({level, std::move(text)});
     while (g_log_lines.size() > MaxLogLines)
         g_log_lines.pop_front();

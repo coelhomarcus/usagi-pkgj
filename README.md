@@ -1,12 +1,15 @@
-# pkgj
+# Usagi PKGj
 
 [![Downloads][img_downloads]][pkgj_downloads] [![Release][img_latest]][pkgj_latest] [![License][img_license]][pkgj_license]
 
-This homebrew allows to download & unpack pkg file directly on Vita together with your [NoNpDrm][] or [NoPsmDrm][] fake license.
-for PSP can be played using [Adrenaline][] or directly from livearea using [NoPspEmuDrm][] 
+Usagi PKGj is a fork of [blastrock/pkgj][pkgj_upstream] — the homebrew that lets you download & unpack PKG files directly on Vita together with your [NoNpDrm][] or [NoPsmDrm][] fake license. PSP content can be played using [Adrenaline][] or directly from LiveArea using [NoPspEmuDrm][].
+
+This fork's main addition is a **cover-art grid view** for browsing your PS Vita games — see below.
+
 # Features
 
 * **works on** all PS Vita models, including PSTV.
+* **cover-art grid view** for the PS Vita games list — see [Cover art](#cover-art) below.
 * **easy** way to see list of available downloads, including searching, filter & sorting.
 * **standalone**, no PC required, everything happens directly on Vita.
 * **automatic** download and unpack, just choose an item, and it will be installed, including bubble in live area.
@@ -28,9 +31,18 @@ It will open context menu. Press triangle again to confirm choice(s) you make in
 
 Press left or right button to move page up or down.
 
+## Cover art
+
+The PS Vita, PSP and PSX games lists are browsed as a grid of cover art by default instead of the plain text list — toggle **"Grid view (games)"** in the triangle options menu to switch back.
+
+Covers are fetched on demand, one at a time, and cached locally so they only need to download once:
+
+1. By default, box art from the [HexFlow-Covers][hexflow_covers] project is tried first (vertical for PS Vita/PSP, square for PSX).
+2. If a title isn't in that set, it falls back to the cover from the PlayStation Store.
+
 # Configuration
 
-pkgj is shipped with valid default URLs. If you wish to change some settings, they can be configured through `ux0:pkgj/config.txt` or `ur0:pkgj/config.txt`.
+Usagi PKGj is shipped with valid default URLs. If you wish to change some settings, they can be configured through `ux0:usagi-pkgj/config.txt` or `ur0:usagi-pkgj/config.txt`.
 
 | Option | Description |
 | --- | --- |
@@ -45,7 +57,9 @@ pkgj is shipped with valid default URLs. If you wish to change some settings, th
 | `url_comppack <URL>` | The URL of the PS Vita compatibility pack list |
 | `install_psp_as_pbp 1` | Install PSP games as EBOOT.EBP files instead of ISO files (see Q&A) |
 | `install_psp_psx_location uma0:` | Install PSP and PSX games on `uma0:` |
-| `no_version_check 1` | Do not check for update when starting PKGj |
+| `no_version_check 1` | Do not check for update when starting Usagi PKGj |
+| `grid_view 0` | Show the games list as a plain text list instead of the cover-art grid (grid is the default) |
+| `thumbnail_folder <path>` | Local folder covers are cached in (default: `ux0:usagi-pkgj/cover`) |
 
 # Q&A
 
@@ -53,7 +67,7 @@ pkgj is shipped with valid default URLs. If you wish to change some settings, th
 
     In case of PSV content: Simply remove queued download in your livearea. If that doesn't work for any reason, you can always delete folder within `ux0:bgdl/t/` - each download will be in separate folder by the order in which they were queued.
 
-    For everything else: `ux0:pkgj` folder - each download will be in separate folder by its title id. Simply delete the folder & resume file.
+    For everything else: `ux0:usagi-pkgj` folder - each download will be in separate folder by its title id. Simply delete the folder & resume file.
 
 2. Download speed is too slow!
 
@@ -93,28 +107,10 @@ pkgj is shipped with valid default URLs. If you wish to change some settings, th
 
 # Building
 
-pkgj uses conan and cmake to build. The setup is a bit tedious, so the
-recommended way is to run ci/ci.sh. It will create a Python virtualenv with
-conan, setup the configuration for cross-compilation, register some recipes,
-and then run cmake and build pkgj for your vita and pkgj_cli for testing.
-
-Prerequisites:
-
-*  Debian packages (or their equivalents):
-
-  - build-essential
-  - git-core
-  - make
-  - cmake
-  - python3-pip
-  - pipenv (pip3 install --user pipenv)
-  - ninja-build
-
-pkgj will be built in ci/build, you can rebuild it anytime you want by running
-ninja in that same directory.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions (host simulator + Vita `.vpk`), the CI pipeline, and a summary of what this fork changes versus upstream.
 
 You can set environment variable `PSVITAIP` (before running cmake) to IP address of
-Vita, that will allow to use `make send` for sending eboot.bin file directly to `ux0:app/PKGJ00000` folder.
+Vita, that will allow to use `make send` for sending eboot.bin file directly to `ux0:app/USAG00001` folder.
 
 To enable debugging logging pass `-DPKGI_ENABLE_LOGGING=ON` argument to cmake. Then application will send debug messages to
 UDP multicast address 239.255.0.100:30000. To receive them you can use [socat][] on your PC:
@@ -124,7 +120,7 @@ UDP multicast address 239.255.0.100:30000. To receive them you can use [socat][]
 # Publishing a release (for maintainers)
 
 Pushing a tag in the form `v0.56` will create a new release and build
-`pkgj.vpk`.
+`UsagiPKGJ.vpk`.
 
 If you want to build a beta, you can push a tag in the form `v0.56-beta1` which
 will create a pre-release. Such a release will not be picked up by the auto
@@ -149,11 +145,13 @@ puff.h and puff.c files are under [zlib][] license.
 [PSDLE]: https://repod.github.io/psdle/
 [socat]: http://www.dest-unreach.org/socat/
 [zlib]: https://www.zlib.net/zlib_license.html
-[pkgj_downloads]: https://github.com/blastrock/pkgj/releases
-[pkgj_latest]: https://github.com/blastrock/pkgj/releases/latest
-[pkgj_license]: https://github.com/blastrock/pkgj/blob/master/LICENSE
-[img_downloads]: https://img.shields.io/github/downloads/blastrock/pkgj/total.svg?maxAge=3600
-[img_latest]: https://img.shields.io/github/release/blastrock/pkgj.svg?maxAge=3600
-[img_license]: https://img.shields.io/github/license/blastrock/pkgj.svg?maxAge=2592000
+[pkgj_upstream]: https://github.com/blastrock/pkgj
+[hexflow_covers]: https://github.com/Andiweli/HexFlow-Covers
+[pkgj_downloads]: https://github.com/coelhomarcus/usagi-pkgj/releases
+[pkgj_latest]: https://github.com/coelhomarcus/usagi-pkgj/releases/latest
+[pkgj_license]: https://github.com/coelhomarcus/usagi-pkgj/blob/master/LICENSE
+[img_downloads]: https://img.shields.io/github/downloads/coelhomarcus/usagi-pkgj/total.svg?maxAge=3600
+[img_latest]: https://img.shields.io/github/release/coelhomarcus/usagi-pkgj.svg?maxAge=3600
+[img_license]: https://img.shields.io/github/license/coelhomarcus/usagi-pkgj.svg?maxAge=2592000
 
 :)

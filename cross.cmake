@@ -46,12 +46,22 @@ add_assets(assets
   assets/background.png
   assets/imgui_v_cg.gxp
   assets/imgui_f_cg.gxp
+  assets/covers/vita_noimage.png
+  assets/covers/vita_loading.png
+  assets/covers/psp_noimage.png
+  assets/covers/psp_loading.png
+  assets/covers/ps1_noimage.png
+  assets/covers/ps1_loading.png
+  assets/flags/usa.png
+  assets/flags/eur.png
+  assets/flags/jpn.png
+  assets/flags/asa.png
+  assets/flags/unk.png
 )
 
 add_executable(pkgj
   ${assets}
   src/aes128.cpp
-  src/annotationdb.cpp
   src/bgdl.cpp
   src/configeditor.cpp
   src/comppackdb.cpp
@@ -65,8 +75,10 @@ add_executable(pkgj
   src/filedownload.cpp
   src/browserview.cpp
   src/gameview.cpp
-  src/descriptionfetcher.cpp
-  src/screenshotfetcher.cpp
+  src/gridview.cpp
+  src/gridtexturepool.cpp
+  src/coverplaceholder.cpp
+  src/regionflag.cpp
   src/logbuffer.cpp
   src/logviewer.cpp
   src/patchinfo.cpp
@@ -140,7 +152,7 @@ configure_file(
    assets/sce_sys/livearea/contents/template.xml
 )
 
-vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} eboot.bin
+vita_create_vpk(${VITA_VPK_NAME}.vpk ${VITA_TITLEID} eboot.bin
   VERSION 0${VITA_VERSION}
   NAME ${VITA_APP_NAME}
   FILE assets/sce_sys/icon0.png sce_sys/icon0.png

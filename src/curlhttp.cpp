@@ -1,11 +1,13 @@
 #include "curlhttp.hpp"
 
 #include "log.hpp"
+#include "thread.hpp"
 
 #include <fmt/format.h>
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 
 // ---------------------------------------------------------------------------
 
@@ -25,6 +27,29 @@ CurlHttp::~CurlHttp()
 
 void CurlHttp::start(const std::string& url, uint64_t offset)
 {
+    // Serializes every CurlHttp transfer process-wide. libcurl on VitaSDK
+    // links against OpenSSL 1.0.x, whose thread-safety depends entirely on
+    // the locking callbacks registered in pkgi_start() (vita.cpp) being
+    // complete and correct — one subtle mistake there (already found and
+    // fixed once: a duplicate kernel-object name silently left most locks
+    // uninitialized) is enough to reintroduce a crash that only shows up
+    // once transfers actually run concurrently, which made it hard to fully
+    // rule out with confidence. This function is the only thing that
+    // touches curl/OpenSSL, and cover downloads are tiny (tens of KB, well
+    // under a second each), so serializing here trades away any theoretical
+    // network overlap for a guarantee — independent of whether the
+    // locking-callback setup is airtight — that only one thread is ever
+    // inside libcurl/OpenSSL at a time.
+    //
+    // Lazily constructed (not a namespace-scope global) so the underlying
+    // kernel mutex is never created before pkgi_start() has run.
+    static Mutex curl_mutex("curl_lock");
+    // abort() (an atomic flag, no lock needed) stays callable from another
+    // thread at any time and takes effect on this transfer's very next
+    // progress callback either way, whether that's while it's already
+    // running or as soon as it acquires the lock below and starts.
+    std::lock_guard<Mutex> curl_lock(curl_mutex);
+
     _body.clear();
     _read_pos       = 0;
     _status_code    = 0;
