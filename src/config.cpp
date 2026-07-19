@@ -335,6 +335,8 @@ Config pkgi_load_config()
             else if (pkgi_stricmp(key, "thumbnail_size") == 0)
                 config.thumbnail_size = static_cast<int>(
                         std::strtol(value, nullptr, 10));
+            else if (pkgi_stricmp(key, "grid_view") == 0)
+                config.grid_view = (pkgi_stricmp(value, "0") != 0);
             else if (pkgi_stricmp(key, "sort") == 0)
                 config.sort = parse_sort(value, SortByName);
             else if (pkgi_stricmp(key, "order") == 0)
@@ -436,6 +438,9 @@ void pkgi_save_config(const Config& config)
             sizeof(data) - len,
             "thumbnail_size %d\n",
             config.thumbnail_size);
+    if (config.grid_view)
+        len += pkgi_snprintf(
+                data + len, sizeof(data) - len, "grid_view 1\n");
     if (!config.install_psp_psx_location.empty())
         len += pkgi_snprintf(
                 data + len,

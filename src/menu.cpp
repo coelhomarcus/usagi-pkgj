@@ -25,6 +25,7 @@ typedef enum
     MenuText,
     MenuSort,
     MenuFilter,
+    MenuGridView,
     MenuRefresh,
     MenuConfigEdit,
     MenuLogView,
@@ -56,6 +57,9 @@ static const MenuEntry menu_entries[] = {
         {MenuFilter, "Japan", DbFilterRegionJPN},
         {MenuFilter, "USA", DbFilterRegionUSA},
         {MenuFilter, "Installed games only", DbFilterInstalled},
+
+        {MenuText, "Display:", 0},
+        {MenuGridView, "Grid view (games)", 0},
 
         {MenuRefresh, "Refresh", 0},
         {MenuConfigEdit, "Edit config.txt", 0},
@@ -227,6 +231,10 @@ int pkgi_do_menu(pkgi_input* input)
         {
             menu_config.filter ^= menu_entries[menu_selected].value;
         }
+        else if (type == MenuGridView)
+        {
+            menu_config.grid_view = !menu_config.grid_view;
+        }
     }
 
     if (menu_width != PKGI_MENU_WIDTH)
@@ -299,6 +307,16 @@ int pkgi_do_menu(pkgi_input* input)
                     "%s %s",
                     menu_config.filter & entry->value ? PKGI_UTF8_CHECK_ON
                                                       : PKGI_UTF8_CHECK_OFF,
+                    entry->text);
+        }
+        else if (type == MenuGridView)
+        {
+            pkgi_snprintf(
+                    text,
+                    sizeof(text),
+                    "%s %s",
+                    menu_config.grid_view ? PKGI_UTF8_CHECK_ON
+                                          : PKGI_UTF8_CHECK_OFF,
                     entry->text);
         }
         pkgi_draw_text(x, y, color, text);

@@ -116,6 +116,14 @@ void pkgi_draw_text_scale(int x, int y, uint32_t color, const char* text, float 
 int pkgi_text_width(const char* text);
 int pkgi_text_height(const char* text);
 
+// Alphabetical name-group jump (LT/RT), also used by the grid view.
+constexpr int PKGI_GROUP_COUNT = 29;
+int pkgi_name_group(const std::string& name);
+int pkgi_next_group(int current, const bool present[PKGI_GROUP_COUNT], bool forward);
+uint32_t pkgi_first_item_with_group(int group);
+void pkgi_set_group_overlay(int group);
+void pkgi_draw_group_overlay();
+
 class Downloader;
 struct DbItem;
 
