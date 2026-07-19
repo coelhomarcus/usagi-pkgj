@@ -150,11 +150,11 @@ puff.h and puff.c files are under [zlib][] license.
 [zlib]: https://www.zlib.net/zlib_license.html
 [pkgj_upstream]: https://github.com/blastrock/pkgj
 [hexflow_covers]: https://github.com/Andiweli/HexFlow-Covers
-[pkgj_downloads]: https://github.com/coelhomarcus/pkgj/releases
-[pkgj_latest]: https://github.com/coelhomarcus/pkgj/releases/latest
-[pkgj_license]: https://github.com/coelhomarcus/pkgj/blob/master/LICENSE
-[img_downloads]: https://img.shields.io/github/downloads/coelhomarcus/pkgj/total.svg?maxAge=3600
-[img_latest]: https://img.shields.io/github/release/coelhomarcus/pkgj.svg?maxAge=3600
-[img_license]: https://img.shields.io/github/license/coelhomarcus/pkgj.svg?maxAge=2592000
+[pkgj_downloads]: https://github.com/coelhomarcus/usagi-pkgj/releases
+[pkgj_latest]: https://github.com/coelhomarcus/usagi-pkgj/releases/latest
+[pkgj_license]: https://github.com/coelhomarcus/usagi-pkgj/blob/master/LICENSE
+[img_downloads]: https://img.shields.io/github/downloads/coelhomarcus/usagi-pkgj/total.svg?maxAge=3600
+[img_latest]: https://img.shields.io/github/release/coelhomarcus/usagi-pkgj.svg?maxAge=3600
+[img_license]: https://img.shields.io/github/license/coelhomarcus/usagi-pkgj.svg?maxAge=2592000
 
 :)
