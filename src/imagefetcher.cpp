@@ -20,11 +20,7 @@ static vita2d_texture* sim_load_image_file(const char* path)
     SDL_FreeSurface(s);
     return reinterpret_cast<vita2d_texture*>(t);
 }
-// SDL_image's IMG_Load auto-detects the format from file content, so the
-// same loader backs both macros in the simulator; the real vita2d library
-// has genuinely separate PNG/JPEG decoders on-device.
 #define vita2d_load_JPEG_file(p)     sim_load_image_file(p)
-#define vita2d_load_PNG_file(p)      sim_load_image_file(p)
 #define vita2d_wait_rendering_done() ((void)0)
 #define vita2d_free_texture(t)       SDL_DestroyTexture(reinterpret_cast<SDL_Texture*>(t))
 #endif
@@ -91,6 +87,25 @@ void ensure_image_folder(const Config* config)
             ? config->thumbnail_folder
             : "ux0:pkgj/cover";
     pkgi_mkdirs(folder.c_str());
+}
+
+// vita2d_load_PNG_file (a path-based loader) has no proven-working call
+// site anywhere in this codebase — the only PNG load this app already
+// relies on in production is vita2d_load_PNG_buffer, used for the bundled
+// UI icon assets (see vita.cpp). Cover PNGs are decoded the same
+// buffer-based way instead of trusting the untested file-based entry point.
+vita2d_texture* decode_png_from_memory(const std::vector<uint8_t>& data)
+{
+#ifndef PKGI_SIMULATOR
+    return vita2d_load_PNG_buffer(data.data());
+#else
+    SDL_RWops* rw = SDL_RWFromConstMem(data.data(), static_cast<int>(data.size()));
+    SDL_Surface* s = rw ? IMG_Load_RW(rw, 1) : nullptr;
+    if (!s) return nullptr;
+    SDL_Texture* t = SDL_CreateTextureFromSurface(g_sdl_renderer, s);
+    SDL_FreeSurface(s);
+    return reinterpret_cast<vita2d_texture*>(t);
+#endif
 }
 }
 
@@ -339,8 +354,23 @@ vita2d_texture* ImageFetcher::get_texture()
     const bool is_png = path.size() >= 4 &&
             path.compare(path.size() - 4, 4, ".png") == 0;
 
-    vita2d_texture* tex = is_png ? vita2d_load_PNG_file(path.c_str())
-                                  : vita2d_load_JPEG_file(path.c_str());
+    vita2d_texture* tex = nullptr;
+    if (is_png)
+    {
+        try
+        {
+            tex = decode_png_from_memory(pkgi_load(path));
+        }
+        catch (const std::exception& e)
+        {
+            LOGFW("[ImageFetcher] failed to read {}: {}", path, e.what());
+        }
+    }
+    else
+    {
+        tex = vita2d_load_JPEG_file(path.c_str());
+    }
+
     if (!tex)
     {
         // Corrupt or unreadable cache file — delete it so the next open

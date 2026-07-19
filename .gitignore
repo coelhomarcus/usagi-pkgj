@@ -8,3 +8,4 @@ CMakeUserPresets.json
 TODO
 send_to_vita.sh
 send_to_ubuntu.sh
+.DS_Store
