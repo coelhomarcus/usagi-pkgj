@@ -362,13 +362,18 @@ ImageFetcher::Status ImageFetcher::get_status()
 }
 
 // ── get_texture ──────────────────────────────────────────────────────────────
-vita2d_texture* ImageFetcher::get_texture()
+vita2d_texture* ImageFetcher::get_texture(bool allow_upload)
 {
     // Process any pending worker result first.
     get_status();
 
     if (!_upload_pending)
         return _texture;
+
+    // A cover is ready to decode, but the caller is rate-limiting texture
+    // creation this frame — leave it pending and try again next frame.
+    if (!allow_upload)
+        return _texture; // still nullptr
 
     // Consume the pending path and create the vita2d texture.
     // vita2d_load_*_file must run on the main (render) thread.

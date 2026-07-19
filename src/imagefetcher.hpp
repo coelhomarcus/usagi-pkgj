@@ -54,8 +54,22 @@ public:
 
     // Must be called from the MAIN thread every frame.
     // Retries submission to the global WorkerPool while every slot is busy.
-    vita2d_texture* get_texture();
+    //
+    // allow_upload gates the (potentially expensive, GPU-uploading) texture
+    // creation from a downloaded/cached file: when false, a ready-to-decode
+    // cover is left pending and get_texture() returns nullptr this frame, so
+    // the caller can rate-limit how many textures are created per frame
+    // (decoding + uploading many at once floods the GPU command queue, which
+    // both hitches and — on Vita3K — widens the window for a texture to be
+    // freed while an upload command still references it). No effect once the
+    // texture already exists.
+    vita2d_texture* get_texture(bool allow_upload = true);
     Status          get_status();
+
+    // The already-created texture, or nullptr if none has been built yet.
+    // Pure accessor: unlike get_texture() it never decodes/uploads, so a
+    // caller can cheaply tell whether a get_texture() call would create one.
+    vita2d_texture* raw_texture() const { return _texture; }
 
 private:
     struct Source

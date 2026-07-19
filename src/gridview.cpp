@@ -3,7 +3,6 @@
 #include "coverplaceholder.hpp"
 #include "imagefetcher.hpp"
 #include "imgui.hpp"
-#include "log.hpp"
 #include "regionflag.hpp"
 extern "C"
 {
@@ -62,6 +61,18 @@ constexpr ImU32 kInstalledCol   = IM_COL32(50, 50, 255, 255);
 // GridImageCache since its inline member bodies reference it.
 uint32_t g_grid_frame = 0;
 
+// Cap on how many cover textures are decoded + GPU-uploaded in a single
+// frame. Reset to 0 at the top of every pkgi_do_main_grid() draw. Fast
+// scrolling makes a whole page (up to kCellsPerPage) of covers become
+// visible at once; materializing them all in one frame floods Vita3K's
+// async GPU command queue, which both hitches and widens the window during
+// which a just-retired texture can still be referenced by a not-yet-executed
+// upload command (the use-after-free that crashes VKTextureCache). Spreading
+// creation over a few frames keeps that window small; cells whose texture
+// isn't ready yet just show the placeholder for an extra frame or two.
+int g_tex_uploads_this_frame = 0;
+constexpr int kMaxTexUploadsPerFrame = 2;
+
 // ── Per-cell cover texture cache ────────────────────────────────────────────
 // Keyed by titleid (never by DbItem*: TitleDatabase::reload() invalidates
 // every DbItem pointer, but titleids of surviving items stay valid).
@@ -69,17 +80,22 @@ uint32_t g_grid_frame = 0;
 // Evicted entries are NOT destroyed immediately. Freeing a vita2d texture
 // shortly after it stops being used has been observed to crash Vita3K
 // inside its own Vulkan texture-upload path (VKTextureCache::
-// upload_texture_impl) — plausibly the emulator still has GPU work queued
-// against it even after vita2d_wait_rendering_done(). This is the first
-// screen in the app that ever holds more than one live cover texture at
-// once (GameView only ever has one), so it's the first to expose it.
-// Confirmed empirically: destroying eagerly (even staggered, a couple per
-// frame) still crashes; not destroying at all doesn't. So evicted entries
-// are "retired" into a queue and only actually freed after sitting unused
-// for a long cooldown, a few at a time — enough slack for whatever the
-// emulator (and, untested, real hardware) needs to fully finish with them,
-// while a hard cap still bounds worst-case leaked VRAM if the grid is
-// toggled on/off faster than the cooldown can drain.
+// upload_texture_impl reads the freed source buffer at a guard page) —
+// the emulator still has GPU work queued against it even after
+// vita2d_wait_rendering_done(). This is the first screen in the app that
+// ever holds more than one live cover texture at once (GameView only ever
+// has one), so it's the first to expose it.
+//
+// So evicted entries are "retired" into a queue and only freed once they've
+// sat unused for a cooldown long enough for any queued GPU command to have
+// executed. The cooldown is honored WITHOUT EXCEPTION: an earlier version
+// force-freed the oldest entry when a hard cap was hit, which under fast
+// scrolling (a full page retires every few frames) became the common path
+// and freed textures barely older than one frame — reintroducing exactly
+// this crash. There is no cap now; instead the queue is bounded implicitly
+// by rate-limiting how many textures are created per frame
+// (kMaxTexUploadsPerFrame above), so retirements — and thus queued VRAM —
+// can't outrun the cooldown drain.
 class GridImageCache
 {
     using CacheMap = std::unordered_map<std::string, std::unique_ptr<ImageFetcher>>;
@@ -139,12 +155,15 @@ public:
             it = _retire_one(it);
     }
 
-    // Call once per frame. Destroys (frees the vita2d texture) at most
-    // kDestroyBudgetPerTick retired entries whose cooldown has elapsed,
-    // oldest first.
+    // Call once per frame. Frees the vita2d texture of retired entries whose
+    // cooldown has elapsed, oldest first, up to kDrainBudgetPerTick of them
+    // (so a whole page retiring at once — e.g. on deactivate — drains over a
+    // few frames rather than in one hitch). The budget is comfortably above
+    // the steady retirement rate (bounded by kMaxTexUploadsPerFrame), so the
+    // queue never grows unbounded.
     void tick(uint32_t now_frame)
     {
-        int budget = kDestroyBudgetPerTick;
+        int budget = kDrainBudgetPerTick;
         while (budget > 0 && !_retired.empty() &&
                now_frame - _retired.front().retired_at_frame >=
                        kRetireCooldownFrames)
@@ -162,25 +181,21 @@ private:
         uint32_t retired_at_frame;
     };
 
-    // Rough starting points, not principled constants — tune against real
-    // Vita3K/hardware behavior. See the class comment above.
-    static constexpr uint32_t kRetireCooldownFrames = 180; // ~3s @ 60fps
-    static constexpr size_t kMaxRetired = 24; // ~7.5MB worst case (~320KB/tex)
-    static constexpr int kDestroyBudgetPerTick = 1;
+    // ~0.75s at 60fps: far beyond any plausible depth of Vita3K's queued GPU
+    // command buffer, so a texture freed after this has certainly stopped
+    // being referenced by pending uploads. Never bypassed (see class comment).
+    static constexpr uint32_t kRetireCooldownFrames = 45;
+    // > steady retirement rate (<= kMaxTexUploadsPerFrame), so the drain keeps
+    // up; higher only smooths a burst (deactivate) over a couple of frames.
+    static constexpr int kDrainBudgetPerTick = 4;
 
     // Single point of eviction: moves _cache[it] into the retirement queue
-    // (enforcing the cap first) and returns the next valid _cache iterator,
-    // matching std::unordered_map::erase's return-value convention so
-    // callers can use it identically in an erase-during-iteration loop.
+    // (never freeing here — tick() does that after the cooldown) and returns
+    // the next valid _cache iterator, matching std::unordered_map::erase's
+    // return-value convention so callers can use it identically in an
+    // erase-during-iteration loop.
     CacheMap::iterator _retire_one(CacheMap::iterator it)
     {
-        if (_retired.size() >= kMaxRetired)
-        {
-            LOGFW("[GridImageCache] retirement queue full ({}), "
-                  "force-destroying oldest",
-                  kMaxRetired);
-            _retired.pop_front();
-        }
         _retired.push_back(
                 {it->first, std::move(it->second), g_grid_frame});
         return _cache.erase(it);
@@ -265,7 +280,20 @@ void draw_cell(
     const float box_h = cov_max.y - cov_min.y;
 
     ImageFetcher* fetcher = g_image_cache.get(item->titleid);
-    vita2d_texture* tex   = fetcher ? fetcher->get_texture() : nullptr;
+    vita2d_texture* tex   = nullptr;
+    if (fetcher)
+    {
+        // Rate-limit texture creation across the whole page this frame: only
+        // let get_texture() decode+upload if we're under budget. A cell whose
+        // cover is downloaded but not yet uploaded just shows the placeholder
+        // for another frame. (raw_texture() != nullptr means it already
+        // exists, so this call won't create one and shouldn't count.)
+        const bool had_tex = fetcher->raw_texture() != nullptr;
+        const bool allow   = g_tex_uploads_this_frame < kMaxTexUploadsPerFrame;
+        tex = fetcher->get_texture(allow);
+        if (!had_tex && tex)
+            ++g_tex_uploads_this_frame;
+    }
 
     if (tex)
     {
@@ -474,6 +502,9 @@ GridResult pkgi_do_main_grid(
                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // Reset the per-frame texture-creation budget consumed by draw_cell().
+    g_tex_uploads_this_frame = 0;
 
     const float content_top =
             static_cast<float>(font_height + PKGI_MAIN_HLINE_EXTRA);
