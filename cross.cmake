@@ -66,7 +66,6 @@ add_executable(pkgj
   src/gameview.cpp
   src/gridview.cpp
   src/coversyncview.cpp
-  src/descriptionfetcher.cpp
   src/logbuffer.cpp
   src/logviewer.cpp
   src/patchinfo.cpp

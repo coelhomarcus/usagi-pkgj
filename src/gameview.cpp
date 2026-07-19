@@ -48,9 +48,6 @@ constexpr ThumbSize kThumbSizes[] = {
 };
 constexpr int kThumbSizeCount = 4;
 
-// Highlight border color when a panel is "focused" at View level
-constexpr ImU32 kFocusBorderCol = IM_COL32(90, 160, 255, 220);
-
 const char* presence_label(DbPresence presence)
 {
     switch (presence)
@@ -133,8 +130,6 @@ GameView::GameView(
     if (is_vita_mode())
     {
         _patch_info_fetcher = std::make_unique<PatchInfoFetcher>(item->titleid);
-        _description_fetcher =
-                std::make_unique<DescriptionFetcher>(item);
     }
 
     refresh();
@@ -172,55 +167,15 @@ void GameView::render()
     const float right_w  = ImGui::GetContentRegionAvail().x
                            - (two_col ? left_w + col_gap : 0.f);
 
-    // ── View-level D-pad: switch focused panel ────────────────────────────────
-    if (two_col && _focus_level == FocusLevel::View)
-    {
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false))
-            _focused_panel = FocusPanel::Left;
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false))
-            _focused_panel = FocusPanel::Right;
-        // X / face-down at View level enters the selected panel
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))
-        {
-            _focus_level   = FocusLevel::Panel;
-            _request_focus = true;
-        }
-    }
-
-    // ── Helper: draw a focus border around a screen rect ─────────────────────
-    auto draw_focus_border = [](ImVec2 min, ImVec2 max)
-    {
-        ImGui::GetWindowDrawList()->AddRect(
-                min, max, kFocusBorderCol, 4.f, 0, 2.f);
-    };
-
     // ── LEFT COLUMN: cover (only when two_col) ────────────────────────────────
+    // Always non-interactive (static image) — never receives nav focus.
     if (two_col)
     {
-        const bool lc_active = (_focus_level == FocusLevel::Panel &&
-                                _focused_panel == FocusPanel::Left) ||
-                               (_focus_level == FocusLevel::SubItem &&
-                                _focused_panel == FocusPanel::Left);
-        const bool lc_hinted = (_focus_level == FocusLevel::View &&
-                                _focused_panel == FocusPanel::Left);
-
-        // Seize ImGui focus for this child when requested
-        if (_request_focus && _focused_panel == FocusPanel::Left &&
-            _focus_level == FocusLevel::Panel)
-        {
-            ImGui::SetNextWindowFocus();
-            _request_focus = false;
-        }
-
-        ImVec2 lc_screen_min = ImGui::GetCursorScreenPos();
-
         ImGui::BeginChild(
                 "##lc",
                 ImVec2(left_w, avail_h),
                 false,
-                (lc_active ? ImGuiWindowFlags_None
-                           : ImGuiWindowFlags_NoNav) |
-                        ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse);
 
         auto* thumb_tex     = _image_fetcher.get_texture();
@@ -267,35 +222,17 @@ void GameView::render()
         }
 
         ImGui::EndChild(); // ##lc
-
-        // Draw focus / hover border over the left column area
-        ImVec2 lc_screen_max{
-                lc_screen_min.x + left_w,
-                lc_screen_min.y + avail_h};
-        if (lc_active || lc_hinted)
-            draw_focus_border(lc_screen_min, lc_screen_max);
-
         ImGui::SameLine(0, col_gap);
     }
 
-    // ── RIGHT COLUMN (or full-width single column) ────────────────────────────
-    const bool rc_active = !two_col ||
-                           (_focus_level == FocusLevel::Panel &&
-                            _focused_panel == FocusPanel::Right) ||
-                           (_focus_level == FocusLevel::SubItem &&
-                            _focused_panel == FocusPanel::Right);
-    const bool rc_hinted = two_col &&
-                           _focus_level == FocusLevel::View &&
-                           _focused_panel == FocusPanel::Right;
-
-    if (_request_focus && (!two_col || _focused_panel == FocusPanel::Right) &&
-        _focus_level == FocusLevel::Panel)
+    // ── RIGHT COLUMN (or full-width single column) ─────────────────────────
+    // Always interactive — this is the only panel with anything to focus,
+    // so it grabs nav focus on the first render and just keeps it.
+    if (_request_focus)
     {
         ImGui::SetNextWindowFocus();
         _request_focus = false;
     }
-
-    ImVec2 rc_screen_min = ImGui::GetCursorScreenPos();
 
     ImGui::PushStyleVar(
             ImGuiStyleVar_WindowPadding, ImVec2(4.f, 2.f));
@@ -303,11 +240,9 @@ void GameView::render()
             "##rc",
             ImVec2(right_w, avail_h),
             false,
-            (rc_active ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoNav));
+            ImGuiWindowFlags_None);
     ImGui::PopStyleVar();
 
-    // Content width inside the child (accounts for padding / scrollbar)
-    const float rc_w = ImGui::GetContentRegionAvail().x;
     ImGui::PushTextWrapPos(0.f); // wrap at right edge of this child
 
     if (is_vita_mode())
@@ -390,65 +325,6 @@ void GameView::render()
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-
-        // ── Description ──────────────────────────────────────────────────────
-        if (_description_fetcher &&
-            _description_fetcher->get_status() ==
-                    DescriptionFetcher::Status::Found)
-        {
-            const auto desc = _description_fetcher->get_description();
-
-            // At Panel level: "Description" is a selectable — pressing X
-            // on it enters SubItem (scroll) mode.  At other levels it is a
-            // plain header.
-            const bool at_panel_right =
-                    (_focus_level == FocusLevel::Panel &&
-                     _focused_panel == FocusPanel::Right);
-            const bool desc_active =
-                    (_focus_level == FocusLevel::SubItem &&
-                     _focused_panel == FocusPanel::Right &&
-                     _subitem_target == SubItemTarget::Description);
-
-            if (at_panel_right)
-            {
-                if (ImGui::Selectable(
-                            "Description###desc_hdr", false,
-                            ImGuiSelectableFlags_None))
-                {
-                    _subitem_target = SubItemTarget::Description;
-                    _focus_level   = FocusLevel::SubItem;
-                    _request_focus = true;
-                }
-            }
-            else
-            {
-                ImGui::TextDisabled("Description");
-            }
-            ImGui::Spacing();
-
-            // Sub-item focus: let description scroll area receive ImGui nav
-            if (_request_focus && desc_active)
-            {
-                ImGui::SetNextWindowFocus();
-                _request_focus = false;
-            }
-
-            ImGui::PushStyleColor(
-                    ImGuiCol_ChildBg, ImVec4(0.05f, 0.09f, 0.18f, 1.f));
-            ImGui::BeginChild(
-                    "##desc", ImVec2(rc_w, 80.f), true,
-                    desc_active ? ImGuiWindowFlags_None
-                                : ImGuiWindowFlags_NoNav);
-            ImGui::PushTextWrapPos(0.f);
-            ImGui::TextUnformatted(desc.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-        }
 
         // ── Diagnostic ───────────────────────────────────────────────────────
         printDiagnostic();
@@ -553,53 +429,16 @@ void GameView::render()
     ImGui::PopTextWrapPos();
     ImGui::EndChild(); // ##rc
 
-    // Draw focus border around the right column
-    if (rc_active || rc_hinted)
-    {
-        ImVec2 rc_screen_max{
-                rc_screen_min.x + right_w,
-                rc_screen_min.y + avail_h};
-        draw_focus_border(rc_screen_min, rc_screen_max);
-    }
-
     // ── Hint bar ─────────────────────────────────────────────────────────────
     ImGui::Spacing();
-    switch (_focus_level)
-    {
-    case FocusLevel::View:
-        if (two_col)
-            ImGui::TextDisabled(
-                    "  [<][>] Switch panel   [X] Enter panel   [O] Close");
-        else
-            ImGui::TextDisabled("  [O] Close");
-        break;
-    case FocusLevel::Panel:
-        ImGui::TextDisabled(
-                "  [X] Select / Enter scroll   [O] Back to panel select");
-        break;
-    case FocusLevel::SubItem:
-        ImGui::TextDisabled(
-                "  [^][v] Scroll   [O] Back");
-        break;
-    }
+    ImGui::TextDisabled("  [O] Close");
 
     ImGui::End();
 }
 
 bool GameView::handle_cancel()
 {
-    switch (_focus_level)
-    {
-    case FocusLevel::SubItem:
-        _focus_level   = FocusLevel::Panel;
-        _request_focus = true;
-        return true;
-    case FocusLevel::Panel:
-        _focus_level = FocusLevel::View;
-        return true;
-    case FocusLevel::View:
-        return false; // caller (pkgi.cpp) will call close()
-    }
+    // No nested focus levels anymore — Circle always closes the view.
     return false;
 }
 

@@ -3,7 +3,6 @@
 #include "comppackdb.hpp"
 #include "config.hpp"
 #include "db.hpp"
-#include "descriptionfetcher.hpp"
 #include "downloader.hpp"
 #include "imagefetcher.hpp"
 #include "install.hpp"
@@ -32,10 +31,10 @@ public:
     void render();
     void refresh();
 
-    // Called by pkgi.cpp instead of close() when the cancel button is pressed.
-    // Walks up the focus hierarchy one level per press.
-    // Returns true  → event consumed (don't close).
-    // Returns false → already at top level (caller should call close()).
+    // Called by pkgi.cpp instead of close() when the cancel button is
+    // pressed. GameView has no nested focus levels to walk back out of
+    // anymore, so this always returns false (caller should call close()) —
+    // kept as a method so pkgi.cpp's call site doesn't need special-casing.
     bool handle_cancel();
 
     bool is_closed() const
@@ -65,22 +64,14 @@ private:
 
     bool _closed{false};
 
-    // ── Focus hierarchy ──────────────────────────────────────────────────────
-    // View  → D-pad picks left/right panel; X enters Panel; Circle closes view
-    // Panel → ImGui nav inside panel; Circle returns to View
-    // SubItem → ImGui nav inside desc/comment scroll; Circle returns to Panel
-    enum class FocusLevel  { View, Panel, SubItem };
-    enum class FocusPanel  { Left, Right };
-    enum class SubItemTarget { Description };
-    FocusLevel    _focus_level{FocusLevel::View};
-    FocusPanel    _focused_panel{FocusPanel::Right};
-    SubItemTarget _subitem_target{SubItemTarget::Description};
-    bool          _request_focus{false}; // set true to seize ImGui focus next frame
-    // ────────────────────────────────────────────────────────────────────────
+    // Seizes ImGui nav focus for the button column on the first render, so
+    // the user lands straight on "Install Game" instead of having to pick a
+    // side first — the left column is a static cover image, never
+    // interactive, so there is nothing to "enter" there.
+    bool _request_focus{true};
 
     std::unique_ptr<PatchInfoFetcher>    _patch_info_fetcher;
     ImageFetcher                         _image_fetcher;
-    std::unique_ptr<DescriptionFetcher>  _description_fetcher; // vita mode only
 
     std::string get_min_system_version();
     bool is_vita_mode() const;
