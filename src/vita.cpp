@@ -48,6 +48,7 @@ extern "C"
 #include <fcntl.h>
 #include <errno.h>
 #include <curl/curl.h>
+#include <openssl/crypto.h>
 
 extern "C"
 {
@@ -518,6 +519,51 @@ void pkgi_dialog_input_get_text(char* text, uint32_t size)
     text[count] = 0;
 }
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+// VitaSDK ships OpenSSL 1.0.x, whose libcrypto is NOT thread-safe unless
+// the application registers locking callbacks — without them, concurrent
+// TLS transfers race on the RNG's global state and trip its built-in
+// missing-locks guard, assert(md_c[1] == md_count[1]) in md_rand.c's
+// ssleay_rand_add, aborting the whole app. This stayed latent while cover
+// downloads ran strictly one at a time; WorkerPool running up to 3
+// concurrent CurlHttp transfers (plus the startup update-check thread)
+// made it fire within seconds of fast grid scrolling — observed on Vita3K
+// as the TTY assert message followed by cascading heap-corruption-style
+// crashes as abort() unwound. OpenSSL 1.1+ is internally thread-safe and
+// turned these callbacks into no-ops, hence the version guard.
+namespace
+{
+SceKernelLwMutexWork* g_openssl_locks = nullptr;
+
+void pkgi_openssl_lock_cb(int mode, int n, const char*, int)
+{
+    if (mode & CRYPTO_LOCK)
+        sceKernelLockLwMutex(&g_openssl_locks[n], 1, nullptr);
+    else
+        sceKernelUnlockLwMutex(&g_openssl_locks[n], 1);
+}
+
+void pkgi_openssl_threadid_cb(CRYPTO_THREADID* id)
+{
+    CRYPTO_THREADID_set_numeric(
+            id, static_cast<unsigned long>(sceKernelGetThreadId()));
+}
+
+void pkgi_openssl_init_locks()
+{
+    const int count = CRYPTO_num_locks();
+    // Lives for the whole process — OpenSSL may take these locks from any
+    // thread at any point until exit, so they are deliberately never freed.
+    g_openssl_locks = new SceKernelLwMutexWork[count];
+    for (int i = 0; i < count; ++i)
+        sceKernelCreateLwMutex(
+                &g_openssl_locks[i], "openssl_lock", 0, 0, nullptr);
+    CRYPTO_THREADID_set_callback(pkgi_openssl_threadid_cb);
+    CRYPTO_set_locking_callback(pkgi_openssl_lock_cb);
+}
+}
+#endif
+
 void pkgi_start(void)
 {
     pkgi_load_sce_paf();
@@ -545,6 +591,11 @@ void pkgi_start(void)
     sceHttpInit(1024 * 1024);
     LOG("Initializing cURL");
     curl_global_init(CURL_GLOBAL_ALL);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    // Must be in place before any thread can start a TLS transfer —
+    // see pkgi_openssl_init_locks above.
+    pkgi_openssl_init_locks();
+#endif
     LOG("Network stack initialized");
 
     sceHttpsDisableOption(SCE_HTTPS_FLAG_SERVER_VERIFY);
