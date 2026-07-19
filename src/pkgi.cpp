@@ -405,6 +405,22 @@ void pkgi_open_gameview_for_selected(Downloader& downloader)
                                : std::optional<CompPackDatabase::Item>{});
 }
 
+// Opens the Triangle options menu. Shared by the list view (pkgi_do_main)
+// and the grid view (pkgi_do_main_grid) so both start it identically.
+void pkgi_open_options_menu()
+{
+    config_temp = config;
+    int allow_refresh = !config.games_url.empty() << 0 |
+                        !config.dlcs_url.empty() << 1 |
+                        !config.demos_url.empty() << 6 |
+                        !config.themes_url.empty() << 5 |
+                        !config.psx_games_url.empty() << 2 |
+                        !config.psp_games_url.empty() << 3 |
+                        !config.psp_dlcs_url.empty() << 7 |
+                        !config.psm_games_url.empty() << 4;
+    pkgi_menu_start(search_active, &config, allow_refresh);
+}
+
 void pkgi_do_main(Downloader& downloader, pkgi_input* input)
 {
     int col_titleid = 0;
@@ -837,17 +853,7 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
     else if (input && (input->pressed & PKGI_BUTTON_T))
     {
         input->pressed &= ~PKGI_BUTTON_T;
-
-        config_temp = config;
-        int allow_refresh = !config.games_url.empty() << 0 |
-                            !config.dlcs_url.empty() << 1 |
-                            !config.demos_url.empty() << 6 |
-                            !config.themes_url.empty() << 5 |
-                            !config.psx_games_url.empty() << 2 |
-                            !config.psp_games_url.empty() << 3 |
-                            !config.psp_dlcs_url.empty() << 7 |
-                            !config.psm_games_url.empty() << 4;
-        pkgi_menu_start(search_active, &config, allow_refresh);
+        pkgi_open_options_menu();
     }
 }
 
@@ -1082,7 +1088,6 @@ void pkgi_do_tail(Downloader& downloader)
         if (mode == ModeGames || mode == ModePspGames)
         {
             bottom_text += fmt::format("{} details ", pkgi_get_ok_str());
-            bottom_text += PKGI_UTF8_S " flag ";
         }
         else
         {
@@ -1752,6 +1757,8 @@ int main()
                             avail_height);
                     if (gr.item_activated)
                         pkgi_open_gameview_for_selected(downloader);
+                    if (gr.open_menu_requested)
+                        pkgi_open_options_menu();
                 }
                 else
                 {

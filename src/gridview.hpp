@@ -11,6 +11,11 @@ struct GridResult
     // needs access to state (gameview, comppack DBs) that is private to
     // pkgi.cpp's translation unit.
     bool item_activated = false;
+
+    // True when Triangle was pressed this frame. The caller (pkgi.cpp) is
+    // responsible for actually starting the menu (pkgi_menu_start), since
+    // that needs config_temp/search_active, private to pkgi.cpp's TU.
+    bool open_menu_requested = false;
 };
 
 // Draws and drives input for the ModeGames cover-art grid view: an

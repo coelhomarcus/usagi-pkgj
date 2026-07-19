@@ -46,6 +46,8 @@ add_assets(assets
   assets/background.png
   assets/imgui_v_cg.gxp
   assets/imgui_f_cg.gxp
+  assets/covers/noimage.png
+  assets/covers/loading.png
 )
 
 add_executable(pkgj

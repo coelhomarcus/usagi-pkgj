@@ -136,6 +136,49 @@ std::string truncate_to_width(const std::string& text, float max_w)
     return s.empty() ? s : s + "...";
 }
 
+// "No image" / "Loading" skeleton art (assets/covers/*.png, same 250x320
+// aspect as the HexFlow covers themselves). Embedded like every other Vita
+// UI asset (see cross.cmake's add_assets + pkgi_load_png); the simulator
+// has no such embedding step, so get_placeholder_texture() returns null
+// there and draw_cell falls back to the plain rect+text placeholder.
+#ifndef PKGI_SIMULATOR
+vita2d_texture* get_placeholder_texture(bool loading)
+{
+    static vita2d_texture* noimage_tex =
+            reinterpret_cast<vita2d_texture*>(pkgi_load_png(covers_noimage));
+    static vita2d_texture* loading_tex =
+            reinterpret_cast<vita2d_texture*>(pkgi_load_png(covers_loading));
+    return loading ? loading_tex : noimage_tex;
+}
+#else
+vita2d_texture* get_placeholder_texture(bool /*loading*/)
+{
+    return nullptr;
+}
+#endif
+
+void draw_scaled(ImDrawList* dl, vita2d_texture* tex, ImVec2 box_min, float box_w, float box_h)
+{
+    float tw = vita2d_texture_get_width(tex);
+    float th = vita2d_texture_get_height(tex);
+    if (tw > box_w)
+    {
+        th = th * box_w / tw;
+        tw = box_w;
+    }
+    if (th > box_h)
+    {
+        tw = tw * box_h / th;
+        th = box_h;
+    }
+    const float ox = box_min.x + (box_w - tw) * 0.5f;
+    const float oy = box_min.y + (box_h - th) * 0.5f;
+    dl->AddImage(
+            reinterpret_cast<ImTextureID>(tex),
+            ImVec2(ox, oy),
+            ImVec2(ox + tw, oy + th));
+}
+
 void draw_cell(
         ImDrawList* dl,
         DbItem* item,
@@ -155,43 +198,34 @@ void draw_cell(
 
     if (tex)
     {
-        float tw = vita2d_texture_get_width(tex);
-        float th = vita2d_texture_get_height(tex);
-        if (tw > box_w)
-        {
-            th = th * box_w / tw;
-            tw = box_w;
-        }
-        if (th > box_h)
-        {
-            tw = tw * box_h / th;
-            th = box_h;
-        }
-        const float ox = cov_min.x + (box_w - tw) * 0.5f;
-        const float oy = cov_min.y + (box_h - th) * 0.5f;
-        dl->AddImage(
-                reinterpret_cast<ImTextureID>(tex),
-                ImVec2(ox, oy),
-                ImVec2(ox + tw, oy + th));
+        draw_scaled(dl, tex, cov_min, box_w, box_h);
     }
     else
     {
-        dl->AddRectFilled(cov_min, cov_max, kCellBgCol, 4.f);
-        dl->AddRect(cov_min, cov_max, kCellBorderCol, 4.f);
-
         const auto status = fetcher ? fetcher->get_status()
                                      : ImageFetcher::Status::Pending;
-        const char* label =
-                (status == ImageFetcher::Status::Downloading ||
-                 status == ImageFetcher::Status::Pending)
-                        ? "..."
-                        : "No image";
-        const ImVec2 sz = ImGui::CalcTextSize(label);
-        dl->AddText(
-                ImVec2(cov_min.x + (box_w - sz.x) * 0.5f,
-                       cov_min.y + (box_h - sz.y) * 0.5f),
-                kStatusCol,
-                label);
+        const bool is_loading =
+                status == ImageFetcher::Status::Downloading ||
+                status == ImageFetcher::Status::Pending;
+
+        vita2d_texture* placeholder = get_placeholder_texture(is_loading);
+        if (placeholder)
+        {
+            draw_scaled(dl, placeholder, cov_min, box_w, box_h);
+        }
+        else
+        {
+            dl->AddRectFilled(cov_min, cov_max, kCellBgCol, 4.f);
+            dl->AddRect(cov_min, cov_max, kCellBorderCol, 4.f);
+
+            const char* label = is_loading ? "..." : "No image";
+            const ImVec2 sz    = ImGui::CalcTextSize(label);
+            dl->AddText(
+                    ImVec2(cov_min.x + (box_w - sz.x) * 0.5f,
+                           cov_min.y + (box_h - sz.y) * 0.5f),
+                    kStatusCol,
+                    label);
+        }
     }
 
     ImU32 badge_col = kTitleCol;
@@ -420,6 +454,12 @@ GridResult pkgi_do_main_grid(
     {
         input->pressed &= ~pkgi_ok_button();
         result.item_activated = true;
+    }
+
+    if (input && (input->pressed & PKGI_BUTTON_T))
+    {
+        input->pressed &= ~PKGI_BUTTON_T;
+        result.open_menu_requested = true;
     }
 
     return result;
