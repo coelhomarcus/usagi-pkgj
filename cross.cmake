@@ -51,7 +51,6 @@ add_assets(assets
 add_executable(pkgj
   ${assets}
   src/aes128.cpp
-  src/annotationdb.cpp
   src/bgdl.cpp
   src/configeditor.cpp
   src/comppackdb.cpp
@@ -68,7 +67,6 @@ add_executable(pkgj
   src/gridview.cpp
   src/coversyncview.cpp
   src/descriptionfetcher.cpp
-  src/screenshotfetcher.cpp
   src/logbuffer.cpp
   src/logviewer.cpp
   src/patchinfo.cpp

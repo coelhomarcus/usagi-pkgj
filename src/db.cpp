@@ -492,8 +492,6 @@ void TitleDatabase::reload(
                         fw_version,
                         /*selected=*/false,
                         /*description=*/"",
-                        /*user_flag=*/UserFlag::None,
-                        /*user_comment=*/"",
                 });
         }
         catch (const std::exception& e)

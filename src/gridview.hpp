@@ -8,8 +8,8 @@ struct GridResult
 {
     // True when OK was pressed on a valid item this frame. The caller
     // (pkgi.cpp) is responsible for actually opening GameView, since that
-    // needs access to state (gameview, comppack DBs, annotation DB) that is
-    // private to pkgi.cpp's translation unit.
+    // needs access to state (gameview, comppack DBs) that is private to
+    // pkgi.cpp's translation unit.
     bool item_activated = false;
 };
 

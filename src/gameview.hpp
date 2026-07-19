@@ -1,6 +1,5 @@
 #pragma once
 
-#include "annotationdb.hpp"
 #include "comppackdb.hpp"
 #include "config.hpp"
 #include "db.hpp"
@@ -9,7 +8,6 @@
 #include "imagefetcher.hpp"
 #include "install.hpp"
 #include "patchinfofetcher.hpp"
-#include "screenshotfetcher.hpp"
 
 #include <memory>
 
@@ -24,8 +22,7 @@ public:
             Downloader* downloader,
             DbItem* item,
             std::optional<CompPackDatabase::Item> base_comppack,
-            std::optional<CompPackDatabase::Item> patch_comppack,
-            AnnotationDatabase* annotationDb);
+            std::optional<CompPackDatabase::Item> patch_comppack);
 
     const DbItem* get_item() const
     {
@@ -74,7 +71,7 @@ private:
     // SubItem → ImGui nav inside desc/comment scroll; Circle returns to Panel
     enum class FocusLevel  { View, Panel, SubItem };
     enum class FocusPanel  { Left, Right };
-    enum class SubItemTarget { Description, Comment };
+    enum class SubItemTarget { Description };
     FocusLevel    _focus_level{FocusLevel::View};
     FocusPanel    _focused_panel{FocusPanel::Right};
     SubItemTarget _subitem_target{SubItemTarget::Description};
@@ -84,15 +81,6 @@ private:
     std::unique_ptr<PatchInfoFetcher>    _patch_info_fetcher;
     ImageFetcher                         _image_fetcher;
     std::unique_ptr<DescriptionFetcher>  _description_fetcher; // vita mode only
-    std::unique_ptr<ScreenshotFetcher>   _screenshot_fetcher;  // vita mode only
-    int                                  _selected_screenshot{-1};
-
-    // --- Annotation state ---
-    AnnotationDatabase* _annotationDb;
-    UserAnnotation      _annotation;       // working copy
-    char                _comment_buf[512]; // buffer for IME result
-    bool                _ime_active{false}; // true while virtual keyboard is open
-    // ------------------------
 
     std::string get_min_system_version();
     bool is_vita_mode() const;

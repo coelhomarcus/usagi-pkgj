@@ -121,8 +121,7 @@ GameView::GameView(
         Downloader* downloader,
         DbItem* item,
         std::optional<CompPackDatabase::Item> base_comppack,
-        std::optional<CompPackDatabase::Item> patch_comppack,
-        AnnotationDatabase* annotationDb)
+        std::optional<CompPackDatabase::Item> patch_comppack)
     : _mode(mode)
     , _config(config)
     , _downloader(downloader)
@@ -130,21 +129,12 @@ GameView::GameView(
     , _base_comppack(base_comppack)
     , _patch_comppack(patch_comppack)
     , _image_fetcher(config, item)
-    , _annotationDb(annotationDb)
-    , _annotation(annotationDb ? annotationDb->get(item->titleid) : UserAnnotation{})
 {
-    // Populate the text buffer from the saved annotation
-    std::strncpy(_comment_buf, _annotation.comment.c_str(),
-                 sizeof(_comment_buf) - 1);
-    _comment_buf[sizeof(_comment_buf) - 1] = '\0';
-
     if (is_vita_mode())
     {
         _patch_info_fetcher = std::make_unique<PatchInfoFetcher>(item->titleid);
         _description_fetcher =
                 std::make_unique<DescriptionFetcher>(item);
-        _screenshot_fetcher =
-                std::make_unique<ScreenshotFetcher>(config, item);
     }
 
     refresh();
@@ -204,7 +194,7 @@ void GameView::render()
                 min, max, kFocusBorderCol, 4.f, 0, 2.f);
     };
 
-    // ── LEFT COLUMN: cover + screenshots (only when two_col) ─────────────────
+    // ── LEFT COLUMN: cover (only when two_col) ────────────────────────────────
     if (two_col)
     {
         const bool lc_active = (_focus_level == FocusLevel::Panel &&
@@ -274,70 +264,6 @@ void GameView::render()
             draw_centered_status_text(
                     ldl, pm, cover_w, cover_h, l1, l2,
                     IM_COL32(160, 170, 200, 200));
-        }
-
-        // Screenshots — vita mode only
-        if (is_vita_mode() && _screenshot_fetcher)
-        {
-            ImGui::Spacing();
-            ImGui::TextDisabled("Screenshots");
-            ImGui::Spacing();
-
-            // Fit 3 screenshots across cover_w with small gaps
-            const float ss_gap = 4.f;
-            const float ss_w   = (cover_w - 2.f * ss_gap) / 3.f;
-            const float ss_h   = ss_w * 9.f / 16.f;
-
-            int shown = 0;
-            for (int i = 0;
-                 i < ScreenshotFetcher::MAX_SCREENSHOTS && shown < 3;
-                 ++i)
-            {
-                const auto ss_st =
-                        _screenshot_fetcher->get_status(i);
-                auto* ss_tx =
-                        _screenshot_fetcher->get_texture(i);
-
-                // Stop rendering once we hit a non-cached 404 slot
-                if (ss_st == ScreenshotFetcher::Status::Error && !ss_tx)
-                    break;
-
-                if (shown > 0)
-                    ImGui::SameLine(0, ss_gap);
-
-                if (ss_tx)
-                {
-                    const bool sel = (_selected_screenshot == i);
-                    if (sel)
-                        ImGui::PushStyleColor(
-                                ImGuiCol_Border,
-                                ImVec4(0.5f, 0.8f, 1.f, 1.f));
-                    if (ImGui::ImageButton(
-                                fmt::format("##ss{}", i).c_str(),
-                                reinterpret_cast<ImTextureID>(ss_tx),
-                                ImVec2(ss_w, ss_h)))
-                        _selected_screenshot = i;
-                    if (sel)
-                        ImGui::PopStyleColor();
-                }
-                else
-                {
-                    // Loading placeholder
-                    ImVec2 pm2 = ImGui::GetCursorScreenPos();
-                    ImGui::Dummy(ImVec2(ss_w, ss_h));
-                    ldl->AddRectFilled(
-                            pm2,
-                            {pm2.x + ss_w, pm2.y + ss_h},
-                            IM_COL32(15, 18, 32, 200),
-                            2.f);
-                    ldl->AddRect(
-                            pm2,
-                            {pm2.x + ss_w, pm2.y + ss_h},
-                            IM_COL32(55, 65, 90, 255),
-                            2.f);
-                }
-                ++shown;
-            }
         }
 
         ImGui::EndChild(); // ##lc
@@ -621,132 +547,6 @@ void GameView::render()
         {
             if (ImGui::Button("Queue as PBP in LiveArea###installpsppbp"))
                 start_download_package(PspInstallMode::LiveAreaPbp);
-        }
-    }
-
-    // ── Annotations (both modes) ─────────────────────────────────────────────
-    if (_annotationDb)
-    {
-        if (_ime_active && pkgi_dialog_input_update())
-        {
-            pkgi_dialog_input_get_text(_comment_buf, sizeof(_comment_buf));
-            _annotation.comment = _comment_buf;
-            _annotationDb->set(_item->titleid, _annotation);
-            _item->user_comment = _annotation.comment;
-            _ime_active = false;
-        }
-
-        ImGui::Separator();
-        ImGui::Text("Personal Notes");
-        ImGui::Spacing();
-
-        // Flag — compact cycling selector  [ < ]  [label]  [ > ]
-        {
-            auto cycle = [&](int delta)
-            {
-                int fi = (static_cast<int>(_annotation.flag) + delta +
-                          UserFlagCount) %
-                         UserFlagCount;
-                _annotation.flag = static_cast<UserFlag>(fi);
-                _annotationDb->set(_item->titleid, _annotation);
-                _item->user_flag = _annotation.flag;
-            };
-
-            ImGui::Text("Flag:");
-            ImGui::SameLine();
-
-            if (ImGui::Button("< ##flagprev"))
-                cycle(-1);
-
-            ImGui::SameLine();
-
-            const bool active = (_annotation.flag != UserFlag::None);
-            if (active)
-                ImGui::PushStyleColor(
-                        ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-            if (ImGui::Button(
-                        fmt::format(
-                                "{:<18}###flaglabel",
-                                user_flag_label(_annotation.flag))
-                                .c_str(),
-                        ImVec2(180.f, 0)))
-                cycle(+1);
-            if (active)
-                ImGui::PopStyleColor();
-
-            ImGui::SameLine();
-            if (ImGui::Button("> ##flagnext"))
-                cycle(+1);
-        }
-
-        ImGui::Spacing();
-
-        // Comment field: shown as a scrollable blue box, like description.
-        // At Panel level: "Comment" header is a selectable to enter scroll.
-        {
-            const bool at_panel_right =
-                    (_focus_level == FocusLevel::Panel &&
-                     _focused_panel == FocusPanel::Right);
-            const bool comment_active =
-                    (_focus_level == FocusLevel::SubItem &&
-                     _focused_panel == FocusPanel::Right &&
-                     _subitem_target == SubItemTarget::Comment);
-
-            if (at_panel_right && !_annotation.comment.empty())
-            {
-                if (ImGui::Selectable(
-                            "Comment###comment_hdr", false,
-                            ImGuiSelectableFlags_None))
-                {
-                    _subitem_target = SubItemTarget::Comment;
-                    _focus_level   = FocusLevel::SubItem;
-                    _request_focus = true;
-                }
-            }
-            else
-            {
-                ImGui::Text("Comment:");
-            }
-
-            if (_request_focus && comment_active)
-            {
-                ImGui::SetNextWindowFocus();
-                _request_focus = false;
-            }
-
-            ImGui::PushStyleColor(
-                    ImGuiCol_ChildBg, ImVec4(0.05f, 0.09f, 0.18f, 1.f));
-            ImGui::BeginChild(
-                    "##comment_box",
-                    ImVec2(rc_w, 60.f),
-                    true,
-                    comment_active ? ImGuiWindowFlags_None
-                                   : ImGuiWindowFlags_NoNav);
-            ImGui::PushTextWrapPos(0.f);
-            ImGui::TextUnformatted(
-                    _annotation.comment.empty()
-                            ? "(no comment)"
-                            : _annotation.comment.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
-        }
-
-        ImGui::Spacing();
-        if (ImGui::Button("Edit Comment"))
-        {
-            pkgi_dialog_input_text("Comment", _comment_buf);
-            _ime_active = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Clear Notes"))
-        {
-            _annotationDb->remove(_item->titleid);
-            _annotation = {};
-            _comment_buf[0] = '\0';
-            _item->user_flag = UserFlag::None;
-            _item->user_comment.clear();
-            _ime_active = false;
         }
     }
 

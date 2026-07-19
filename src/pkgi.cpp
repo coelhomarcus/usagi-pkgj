@@ -4,7 +4,6 @@ extern "C"
 {
 #include "style.h"
 }
-#include "annotationdb.hpp"
 #include "bgdl.hpp"
 #include "comppackdb.hpp"
 #include "config.hpp"
@@ -54,9 +53,6 @@ extern SDL_Texture* sim_create_font_texture(const uint32_t* px, int w, int h);
 
 namespace
 {
-// forward declaration — defined later in this anonymous namespace
-void pkgi_apply_annotations();
-
 typedef enum
 {
     StateError,
@@ -100,7 +96,6 @@ std::unique_ptr<ConfigEditor> config_editor;
 std::unique_ptr<LogViewer> log_viewer;
 std::unique_ptr<CoverSyncView> cover_sync_view;
 std::unique_ptr<BrowseView> browse_view;
-std::unique_ptr<AnnotationDatabase> annotation_db;
 bool need_refresh = true;
 bool runtime_install_queued = false;
 std::string content_to_refresh;
@@ -264,7 +259,6 @@ void pkgi_refresh_thread(void)
         first_item = 0;
         selected_item = 0;
         configure_db(db.get(), search_active ? search_text : NULL, &config);
-        pkgi_apply_annotations();
     }
     catch (const std::exception& e)
     {
@@ -408,8 +402,7 @@ void pkgi_open_gameview_for_selected(Downloader& downloader)
             mode == ModeGames ? comppack_db_games->get(item->titleid)
                                : std::optional<CompPackDatabase::Item>{},
             mode == ModeGames ? comppack_db_updates->get(item->titleid)
-                               : std::optional<CompPackDatabase::Item>{},
-            annotation_db.get());
+                               : std::optional<CompPackDatabase::Item>{});
 }
 
 void pkgi_do_main(Downloader& downloader, pkgi_input* input)
@@ -712,17 +705,9 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
                         PKGI_MAIN_COLUMN_PADDING - sizew - col_name,
                 line_height);
         item->selected = std::find(selected_items.begin(), selected_items.end(), item) != selected_items.end();
-        {
-            std::string display_name;
-            if (item->user_flag != UserFlag::None)
-                display_name = fmt::format("{} {}",
-                        user_flag_symbol(item->user_flag), item->name);
-            else
-                display_name = item->name;
-            pkgi_draw_text(col_name, y,
-                    item->selected ? PKGI_COLOR_TEXT_SELECTED : PKGI_COLOR_TEXT,
-                    display_name.c_str());
-        }
+        pkgi_draw_text(col_name, y,
+                item->selected ? PKGI_COLOR_TEXT_SELECTED : PKGI_COLOR_TEXT,
+                item->name.c_str());
         pkgi_clip_remove();
 
         y += font_height + PKGI_MAIN_ROW_PADDING;
@@ -835,33 +820,7 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
     }
     else if (input && (input->pressed & PKGI_BUTTON_S))
     {
-        /*
-        * Annotation Flag Cycling Logic
-        * ----------------------------
-        * This block handles user flag annotation for games.
-        * - When the S button is pressed in ModeGames, the currently selected game's user_flag is cycled forward (wraps around).
-        * - The new flag is saved immediately to the annotation database (AnnotationDatabase).
-        * - Flags are defined in src/annotationdb.hpp as UserFlag enum.
-        * - The annotation system allows users to mark games with custom statuses (Favorite, Good, Bad, Completed, etc.).
-        * - See also: src/annotationdb.cpp, src/db.hpp, src/gameview.cpp for UI integration.
-        *
-        * Related context: .github/copilot-instructions.md (Annotation Feature section)
-        */
-        if (mode == ModeGames || mode == ModePspGames)
-        {
-            input->pressed &= ~PKGI_BUTTON_S;
-            DbItem* item = db->get(selected_item);
-            if (item && annotation_db)
-            {
-                // Cycle flag forward (wraps around)
-                const int next = (static_cast<int>(item->user_flag) + 1) % UserFlagCount;
-                item->user_flag = static_cast<UserFlag>(next);
-                UserAnnotation ann = annotation_db->get(item->titleid);
-                ann.flag = item->user_flag;
-                annotation_db->set(item->titleid, ann);
-            }
-        }
-        else if (mode == ModeDlcs) 
+        if (mode == ModeDlcs)
         {
             input->pressed &= ~PKGI_BUTTON_S;
             DbItem* item = db->get(selected_item);
@@ -1184,26 +1143,11 @@ void reposition(void)
     }
 }
 
-void pkgi_apply_annotations()
-{
-    if (!annotation_db)
-        return;
-    for (uint32_t i = 0; i < db->count(); ++i)
-    {
-        auto* item = db->get(i);
-        if (!item) continue;
-        const auto ann = annotation_db->get(item->titleid);
-        item->user_flag    = ann.flag;
-        item->user_comment = ann.comment;
-    }
-}
-
 void pkgi_reload()
 {
     try
     {
         configure_db(db.get(), search_active ? search_text : NULL, &config);
-        pkgi_apply_annotations();
     }
     catch (const std::exception& e)
     {
@@ -1609,10 +1553,6 @@ int main()
                                 node.label, node.custom_tsv_url);
                     }
                 });
-
-        annotation_db = std::make_unique<AnnotationDatabase>(
-                std::string(pkgi_get_config_folder()) + "/annotations.db");
-        pkgi_apply_annotations();
 
 #ifdef PKGI_SIMULATOR
         pkgi_texture background = nullptr; // no embedded assets in simulator
