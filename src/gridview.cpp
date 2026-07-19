@@ -35,6 +35,32 @@ static inline float vita2d_texture_get_height(vita2d_texture* t)
 #include <unordered_map>
 #include <vector>
 
+// "No image" / "Loading" skeleton art (assets/covers/*.png, same 250x320
+// aspect as the HexFlow covers themselves). Embedded like every other Vita
+// UI asset (see cross.cmake's add_assets + pkgi_load_png). Deliberately at
+// file scope, NOT inside the anonymous namespace below: the extern
+// _binary_..._start/_end symbols the macro declares must match the plain
+// (non-mangled) global symbols add_assets emits from raw assembly — inside
+// an anonymous namespace they'd get C++ linkage instead and fail to link
+// (same trap as pkgi.cpp's group-jump helpers). The simulator has no such
+// embedding step, so this returns null there and draw_cell falls back to
+// the plain rect+text placeholder.
+#ifndef PKGI_SIMULATOR
+vita2d_texture* get_placeholder_texture(bool loading)
+{
+    static vita2d_texture* noimage_tex =
+            reinterpret_cast<vita2d_texture*>(pkgi_load_png(covers_noimage));
+    static vita2d_texture* loading_tex =
+            reinterpret_cast<vita2d_texture*>(pkgi_load_png(covers_loading));
+    return loading ? loading_tex : noimage_tex;
+}
+#else
+vita2d_texture* get_placeholder_texture(bool /*loading*/)
+{
+    return nullptr;
+}
+#endif
+
 namespace
 {
 // Covers are vertical box art (~250x320, HexFlow-Covers) — fewer columns
@@ -135,27 +161,6 @@ std::string truncate_to_width(const std::string& text, float max_w)
         s.pop_back();
     return s.empty() ? s : s + "...";
 }
-
-// "No image" / "Loading" skeleton art (assets/covers/*.png, same 250x320
-// aspect as the HexFlow covers themselves). Embedded like every other Vita
-// UI asset (see cross.cmake's add_assets + pkgi_load_png); the simulator
-// has no such embedding step, so get_placeholder_texture() returns null
-// there and draw_cell falls back to the plain rect+text placeholder.
-#ifndef PKGI_SIMULATOR
-vita2d_texture* get_placeholder_texture(bool loading)
-{
-    static vita2d_texture* noimage_tex =
-            reinterpret_cast<vita2d_texture*>(pkgi_load_png(covers_noimage));
-    static vita2d_texture* loading_tex =
-            reinterpret_cast<vita2d_texture*>(pkgi_load_png(covers_loading));
-    return loading ? loading_tex : noimage_tex;
-}
-#else
-vita2d_texture* get_placeholder_texture(bool /*loading*/)
-{
-    return nullptr;
-}
-#endif
 
 void draw_scaled(ImDrawList* dl, vita2d_texture* tex, ImVec2 box_min, float box_w, float box_h)
 {
