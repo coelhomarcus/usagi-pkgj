@@ -309,7 +309,7 @@ void draw_cell(
     if (vita2d_texture* flag_tex =
                 pkgi_get_region_flag(pkgi_get_region(item->titleid)))
     {
-        const float flag_h = ImGui::GetTextLineHeight() * 1.3f;
+        const float flag_h = ImGui::GetTextLineHeight() * 0.8f;
         const float flag_w = flag_h * 1.5f; // matches the 3:2 flag asset canvas
         const ImVec2 fmin(cov_min.x + 6.f, cov_min.y + 4.f);
         const ImVec2 fmax(fmin.x + flag_w, fmin.y + flag_h);
