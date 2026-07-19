@@ -66,6 +66,33 @@ static std::vector<BrowseNode> build_tree(const Config& config)
     return root;
 }
 
+struct HintSegment
+{
+    const char* text;
+    uint32_t color;
+};
+
+static int hint_width(const HintSegment* segments, size_t count)
+{
+    int width = 0;
+    for (size_t i = 0; i < count; ++i)
+        width += pkgi_text_width(segments[i].text);
+    return width;
+}
+
+static void draw_hint_segments_centered(
+        int y,
+        const HintSegment* segments,
+        size_t count)
+{
+    int x = (VITA_WIDTH - hint_width(segments, count)) / 2;
+    for (size_t i = 0; i < count; ++i)
+    {
+        pkgi_draw_text(x, y, segments[i].color, segments[i].text);
+        x += pkgi_text_width(segments[i].text);
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 BrowseView::BrowseView(
@@ -249,16 +276,14 @@ void BrowseView::render() const
     pkgi_draw_rect(
             0, list_bot, VITA_WIDTH, PKGI_MAIN_HLINE_HEIGHT, PKGI_COLOR_HLINE);
 
-    char hint[128];
-    const char* ok_str =
-            pkgi_ok_button() == PKGI_BUTTON_X ? PKGI_UTF8_X : PKGI_UTF8_O;
-    const char* cancel_str =
-            pkgi_cancel_button() == PKGI_BUTTON_O ? PKGI_UTF8_O : PKGI_UTF8_X;
-    pkgi_snprintf(
-            hint, sizeof(hint), "%s Select  %s Back", ok_str, cancel_str);
-    pkgi_draw_text(
-            (VITA_WIDTH - pkgi_text_width(hint)) / 2,
+    const HintSegment hint[] = {
+        { pkgi_button_str(pkgi_ok_button()), pkgi_button_color(pkgi_ok_button()) },
+        { " Select  ", PKGI_COLOR_TEXT_TAIL },
+        { pkgi_button_str(pkgi_cancel_button()), pkgi_button_color(pkgi_cancel_button()) },
+        { " Back", PKGI_COLOR_TEXT_TAIL },
+    };
+    draw_hint_segments_centered(
             list_bot + PKGI_MAIN_HLINE_HEIGHT,
-            PKGI_COLOR_TEXT_TAIL,
-            hint);
+            hint,
+            PKGI_COUNTOF(hint));
 }

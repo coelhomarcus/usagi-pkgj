@@ -82,6 +82,28 @@ std::string friendly_size(int64_t size)
     return fmt::format("{:.2f} GB", static_cast<double>(size) / 1000.0 / 1000.0 / 1000.0);
 }
 
+ImVec4 pkgi_color_to_imgui(uint32_t color)
+{
+    constexpr float inv255 = 1.0f / 255.0f;
+    return ImVec4(
+            static_cast<float>(color & 0xFF) * inv255,
+            static_cast<float>((color >> 8) & 0xFF) * inv255,
+            static_cast<float>((color >> 16) & 0xFF) * inv255,
+            1.0f);
+}
+
+void draw_button_hint(uint32_t button, const char* text)
+{
+    ImGui::SetCursorPosX(
+            ImGui::GetCursorPosX() + ImGui::CalcTextSize("  ").x);
+    ImGui::TextColored(
+            pkgi_color_to_imgui(pkgi_button_color(button)),
+            "%s",
+            pkgi_button_str(button));
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::TextDisabled(" %s", text);
+}
+
 void draw_centered_status_text(
         ImDrawList* dl,
         ImVec2 panel_min,
@@ -450,14 +472,14 @@ void GameView::render()
 
     // ── Hint bar ─────────────────────────────────────────────────────────────
     ImGui::Spacing();
-    ImGui::TextDisabled("  [O] Close");
+    draw_button_hint(pkgi_cancel_button(), "Close");
 
     ImGui::End();
 }
 
 bool GameView::handle_cancel()
 {
-    // No nested focus levels anymore — Circle always closes the view.
+    // No nested focus levels anymore; the cancel button always closes the view.
     return false;
 }
 

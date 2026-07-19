@@ -54,6 +54,8 @@ int pkgi_is_unsafe_mode(void);
 
 int pkgi_ok_button(void);
 int pkgi_cancel_button(void);
+const char* pkgi_button_str(uint32_t button);
+uint32_t pkgi_button_color(uint32_t button);
 const char* pkgi_get_ok_str(void);
 const char* pkgi_get_cancel_str(void);
 

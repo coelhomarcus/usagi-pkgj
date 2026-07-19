@@ -42,6 +42,7 @@ extern SDL_Texture* sim_create_font_texture(const uint32_t* px, int w, int h);
 #include <memory>
 #include <set>
 #include <cctype>
+#include <vector>
 
 #ifndef PKGI_SIMULATOR
 #include <psp2common/npdrm.h>
@@ -978,6 +979,52 @@ uint64_t get_speed(const uint64_t download_offset)
     return last_progress_speed;
 }
 
+struct TextSegment
+{
+    std::string text;
+    uint32_t color;
+};
+
+int segments_width(const std::vector<TextSegment>& segments)
+{
+    int width = 0;
+    for (const auto& segment : segments)
+        width += pkgi_text_width(segment.text.c_str());
+    return width;
+}
+
+void append_text_segment(
+        std::vector<TextSegment>& segments,
+        const std::string& text)
+{
+    if (!text.empty())
+        segments.push_back({ text, PKGI_COLOR_TEXT_TAIL });
+}
+
+void append_button_segment(std::vector<TextSegment>& segments, uint32_t button)
+{
+    const char* text = pkgi_button_str(button);
+    if (text[0] != 0)
+        segments.push_back({ text, pkgi_button_color(button) });
+}
+
+void draw_centered_segments(
+        int y,
+        int left,
+        int right,
+        const std::vector<TextSegment>& segments)
+{
+    const int width = segments_width(segments);
+    const int area_width = VITA_WIDTH - left - right;
+    int x = left + (area_width - width) / 2;
+
+    for (const auto& segment : segments)
+    {
+        pkgi_draw_text(x, y, segment.color, segment.text.c_str());
+        x += pkgi_text_width(segment.text.c_str());
+    }
+}
+
 void pkgi_do_tail(Downloader& downloader)
 {
     char text[256];
@@ -1075,36 +1122,51 @@ void pkgi_do_tail(Downloader& downloader)
     int left = pkgi_text_width(text) + PKGI_MAIN_TEXT_PADDING;
     int right = rightw + PKGI_MAIN_TEXT_PADDING;
 
-    std::string bottom_text;
+    std::vector<TextSegment> bottom_segments;
     if (pkgi_overlay_is_open() || pkgi_dialog_is_open())
     {
-        bottom_text = fmt::format(
-                "{} select {} close", pkgi_get_ok_str(), pkgi_get_cancel_str());
+        append_button_segment(bottom_segments, pkgi_ok_button());
+        append_text_segment(bottom_segments, " select ");
+        append_button_segment(bottom_segments, pkgi_cancel_button());
+        append_text_segment(bottom_segments, " close");
     }
     else if (pkgi_menu_is_open())
     {
-        bottom_text = fmt::format(
-                "{} select  " PKGI_UTF8_T " close  {} cancel",
-                pkgi_get_ok_str(),
-                pkgi_get_cancel_str());
+        append_button_segment(bottom_segments, pkgi_ok_button());
+        append_text_segment(bottom_segments, " select  ");
+        append_button_segment(bottom_segments, PKGI_BUTTON_T);
+        append_text_segment(bottom_segments, " close  ");
+        append_button_segment(bottom_segments, pkgi_cancel_button());
+        append_text_segment(bottom_segments, " cancel");
     }
     else
     {
         if (mode == ModeGames || mode == ModePspGames)
         {
-            bottom_text += fmt::format("{} details ", pkgi_get_ok_str());
+            append_button_segment(bottom_segments, pkgi_ok_button());
+            append_text_segment(bottom_segments, " details ");
         }
         else
         {
             DbItem* item = db->get(selected_item);
             if (item && item->presence == PresenceInstalling)
-                bottom_text += fmt::format("{} cancel ", pkgi_get_ok_str());
+            {
+                append_button_segment(bottom_segments, pkgi_ok_button());
+                append_text_segment(bottom_segments, " cancel ");
+            }
             else if (item && item->presence != PresenceInstalled)
-                bottom_text += fmt::format("{} install ", pkgi_get_ok_str());
+            {
+                append_button_segment(bottom_segments, pkgi_ok_button());
+                append_text_segment(bottom_segments, " install ");
+            }
         }
-        bottom_text += PKGI_UTF8_T " menu ";
+        append_button_segment(bottom_segments, PKGI_BUTTON_T);
+        append_text_segment(bottom_segments, " menu ");
         if (mode == ModeDlcs)
-            bottom_text += PKGI_UTF8_S " select";
+        {
+            append_button_segment(bottom_segments, PKGI_BUTTON_S);
+            append_text_segment(bottom_segments, " select");
+        }
     }
 
     pkgi_clip_set(
@@ -1112,11 +1174,7 @@ void pkgi_do_tail(Downloader& downloader)
             second_line,
             VITA_WIDTH - right - left,
             VITA_HEIGHT - second_line);
-    pkgi_draw_text(
-            (VITA_WIDTH - pkgi_text_width(bottom_text.c_str())) / 2,
-            second_line,
-            PKGI_COLOR_TEXT_TAIL,
-            bottom_text.c_str());
+    draw_centered_segments(second_line, left, right, bottom_segments);
     pkgi_clip_remove();
 }
 
@@ -1199,12 +1257,46 @@ void pkgi_open_db()
 // so they'd be invisible to other TUs from inside it.
 const char* pkgi_get_ok_str(void)
 {
-    return pkgi_ok_button() == PKGI_BUTTON_X ? PKGI_UTF8_X : PKGI_UTF8_O;
+    return pkgi_button_str(pkgi_ok_button());
 }
 
 const char* pkgi_get_cancel_str(void)
 {
-    return pkgi_cancel_button() == PKGI_BUTTON_O ? PKGI_UTF8_O : PKGI_UTF8_X;
+    return pkgi_button_str(pkgi_cancel_button());
+}
+
+const char* pkgi_button_str(uint32_t button)
+{
+    switch (button)
+    {
+    case PKGI_BUTTON_X:
+        return PKGI_UTF8_X;
+    case PKGI_BUTTON_O:
+        return PKGI_UTF8_O;
+    case PKGI_BUTTON_T:
+        return PKGI_UTF8_T;
+    case PKGI_BUTTON_S:
+        return PKGI_UTF8_S;
+    default:
+        return "";
+    }
+}
+
+uint32_t pkgi_button_color(uint32_t button)
+{
+    switch (button)
+    {
+    case PKGI_BUTTON_X:
+        return PKGI_COLOR_BUTTON_CROSS;
+    case PKGI_BUTTON_O:
+        return PKGI_COLOR_BUTTON_CIRCLE;
+    case PKGI_BUTTON_T:
+        return PKGI_COLOR_BUTTON_TRIANGLE;
+    case PKGI_BUTTON_S:
+        return PKGI_COLOR_BUTTON_SQUARE;
+    default:
+        return PKGI_COLOR_TEXT_TAIL;
+    }
 }
 
 // ── Alphabetical name-group jump (LT/RT) ────────────────────────────────────
@@ -1582,20 +1674,38 @@ int main()
         uint32_t* pixels = NULL;
         int width, height;
 #ifndef PKGI_SIMULATOR
+        auto build_imgui_ranges =
+                [](const ImWchar* base_ranges, ImVector<ImWchar>& ranges)
+        {
+            ImFontGlyphRangesBuilder builder;
+            builder.AddRanges(base_ranges);
+            builder.AddChar(0x2573); // cross
+            builder.AddChar(0x25CB); // circle
+            builder.AddChar(0x25B3); // triangle
+            builder.AddChar(0x25A1); // square
+            builder.BuildRanges(&ranges);
+        };
+
+        ImVector<ImWchar> latin_ranges;
+        ImVector<ImWchar> japanese_ranges;
+        build_imgui_ranges(io.Fonts->GetGlyphRangesDefault(), latin_ranges);
         if (!io.Fonts->AddFontFromFileTTF(
                     "sa0:/data/font/pvf/ltn0.pvf",
                     20.0f,
                     0,
-                    io.Fonts->GetGlyphRangesDefault()))
+                    latin_ranges.Data))
             throw std::runtime_error("failed to load ltn0.pvf");
         {
             ImFontConfig merge_cfg;
             merge_cfg.MergeMode = true;
+            build_imgui_ranges(
+                    io.Fonts->GetGlyphRangesJapanese(),
+                    japanese_ranges);
             io.Fonts->AddFontFromFileTTF(
                     "sa0:/data/font/pvf/jpn0.pvf",
                     20.0f,
                     &merge_cfg,
-                    io.Fonts->GetGlyphRangesJapanese());
+                    japanese_ranges.Data);
         }
 #endif
         io.Fonts->GetTexDataAsRGBA32((uint8_t**)&pixels, &width, &height);
