@@ -4,6 +4,7 @@
 #include "imagefetcher.hpp"
 #include "imgui.hpp"
 #include "log.hpp"
+#include "regionflag.hpp"
 extern "C"
 {
 #include "style.h"
@@ -40,10 +41,8 @@ static inline float vita2d_texture_get_height(vita2d_texture* t)
 
 namespace
 {
-// Covers are vertical box art (~250x320, HexFlow-Covers) — fewer columns
-// and fewer rows than a square-cover grid so each one gets a much bigger,
-// more legible box instead of being squeezed into a near-square cell.
-constexpr int kCols = 3;
+// Covers are vertical box art (~250x320, HexFlow-Covers).
+constexpr int kCols = 4;
 constexpr int kRows = 2;
 constexpr int kCellsPerPage = kCols * kRows;
 
@@ -305,6 +304,17 @@ void draw_cell(
                 ImVec2(cov_max.x - bsz.x - 6.f, cov_min.y + 4.f),
                 badge_col,
                 badge);
+    }
+
+    if (vita2d_texture* flag_tex =
+                pkgi_get_region_flag(pkgi_get_region(item->titleid)))
+    {
+        const float flag_h = ImGui::GetTextLineHeight() * 1.3f;
+        const float flag_w = flag_h * 1.5f; // matches the 3:2 flag asset canvas
+        const ImVec2 fmin(cov_min.x + 6.f, cov_min.y + 4.f);
+        const ImVec2 fmax(fmin.x + flag_w, fmin.y + flag_h);
+        dl->AddRectFilled(fmin, fmax, kCellBgCol, 2.f);
+        dl->AddImage(reinterpret_cast<ImTextureID>(flag_tex), fmin, fmax);
     }
 
     const std::string title = truncate_to_width(item->name, cell_w - 4.f);

@@ -40,8 +40,6 @@ Covers are fetched on demand, one at a time, and cached locally so they only nee
 1. By default, vertical box art from the [HexFlow-Covers][hexflow_covers] project is tried first.
 2. If a title isn't in that set, it falls back to the cover from the PlayStation Store.
 
-If you'd rather not wait for covers to pop in while scrolling, use **"Sync all covers (games)"** in the same menu to fetch everything up front, one title at a time, in the background — you can back out any time and resume later; already-cached covers are skipped.
-
 # Configuration
 
 Usagi PKGj is shipped with valid default URLs. If you wish to change some settings, they can be configured through `ux0:usagi-pkgj/config.txt` or `ur0:usagi-pkgj/config.txt`.

@@ -877,6 +877,19 @@ void pkgi_draw_texture(pkgi_texture texture, int x, int y)
     vita2d_draw_texture(tex, (float)x, (float)y);
 }
 
+void pkgi_draw_texture_scaled(pkgi_texture texture, int x, int y, int w, int h)
+{
+    vita2d_texture* tex = static_cast<vita2d_texture*>(texture);
+    if (!tex)
+        return;
+    const float tw = (float)vita2d_texture_get_width(tex);
+    const float th = (float)vita2d_texture_get_height(tex);
+    if (tw <= 0 || th <= 0)
+        return;
+    vita2d_draw_texture_scale(
+            tex, (float)x, (float)y, (float)w / tw, (float)h / th);
+}
+
 void pkgi_clip_set(int x, int y, int w, int h)
 {
     vita2d_enable_clipping();

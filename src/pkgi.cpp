@@ -15,7 +15,7 @@ extern "C"
 #include "downloader.hpp"
 #include "gameview.hpp"
 #include "gridview.hpp"
-#include "coversyncview.hpp"
+#include "regionflag.hpp"
 #include "imgui.hpp"
 #include "install.hpp"
 #include "logviewer.hpp"
@@ -94,7 +94,6 @@ std::set<std::string> installed_themes;
 std::unique_ptr<GameView> gameview;
 std::unique_ptr<ConfigEditor> config_editor;
 std::unique_ptr<LogViewer> log_viewer;
-std::unique_ptr<CoverSyncView> cover_sync_view;
 std::unique_ptr<BrowseView> browse_view;
 bool need_refresh = true;
 bool runtime_install_queued = false;
@@ -103,7 +102,7 @@ void pkgi_reload();
 
 bool pkgi_overlay_is_open()
 {
-    return gameview || config_editor || log_viewer || cover_sync_view;
+    return gameview || config_editor || log_viewer;
 }
 
 Type mode_to_type(Mode mode)
@@ -426,8 +425,13 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
     int col_titleid = 0;
     int col_region = col_titleid + pkgi_text_width("PCSE00000") +
                      PKGI_MAIN_COLUMN_PADDING;
+    // Flag badges are drawn at a fixed 3:2 box matching the row's text
+    // height, same ratio as the embedded assets/flags/*.png canvas, so no
+    // per-flag aspect-ratio math is needed at draw time.
+    int region_flag_h = font_height;
+    int region_flag_w = region_flag_h * 3 / 2;
     int col_installed =
-            col_region + pkgi_text_width("USA") + PKGI_MAIN_COLUMN_PADDING;
+            col_region + region_flag_w + PKGI_MAIN_COLUMN_PADDING;
     int col_name = col_installed + pkgi_text_width(PKGI_UTF8_INSTALLED) +
                    PKGI_MAIN_COLUMN_PADDING;
 
@@ -663,29 +667,23 @@ void pkgi_do_main(Downloader& downloader, pkgi_input* input)
         }
 
         pkgi_draw_text(col_titleid, y, color, titleid);
-        const char* region;
-        switch (pkgi_get_region(item->titleid))
+        const GameRegion item_region = pkgi_get_region(item->titleid);
+        vita2d_texture* region_flag = pkgi_get_region_flag(item_region);
+        if (region_flag)
         {
-        case RegionASA:
-            region = "ASA";
-            break;
-        case RegionEUR:
-            region = "EUR";
-            break;
-        case RegionJPN:
-            region = "JPN";
-            break;
-        case RegionINT:
-            region = "INT";
-            break;
-        case RegionUSA:
-            region = "USA";
-            break;
-        default:
-            region = "???";
-            break;
+            pkgi_draw_texture_scaled(
+                    region_flag,
+                    col_region,
+                    y,
+                    region_flag_w,
+                    region_flag_h);
         }
-        pkgi_draw_text(col_region, y, color, region);
+        else
+        {
+            // No single flag represents these — keep the text code.
+            const char* region = item_region == RegionINT ? "INT" : "???";
+            pkgi_draw_text(col_region, y, color, region);
+        }
         if (item->presence == PresenceIncomplete)
         {
             pkgi_draw_text(col_installed, y, color, PKGI_UTF8_PARTIAL);
@@ -1189,9 +1187,9 @@ void pkgi_open_db()
 }
 
 // Deliberately defined OUTSIDE the anonymous namespace above: other
-// translation units (gridview.cpp, coversyncview.cpp) call these (declared
-// in pkgi.hpp), and anonymous-namespace members have internal linkage even
-// without `static`, so they'd be invisible to other TUs from inside it.
+// translation units (gridview.cpp) call these (declared in pkgi.hpp), and
+// anonymous-namespace members have internal linkage even without `static`,
+// so they'd be invisible to other TUs from inside it.
 const char* pkgi_get_ok_str(void)
 {
     return pkgi_ok_button() == PKGI_BUTTON_X ? PKGI_UTF8_X : PKGI_UTF8_O;
@@ -1627,7 +1625,7 @@ int main()
             const bool has_imgui_overlay =
                     gameview || config_editor || pkgi_dialog_is_open();
 
-            if (has_imgui_overlay || log_viewer || cover_sync_view)
+            if (has_imgui_overlay || log_viewer)
             {
                 // Feed D-pad to ImGui only for ImGui-managed overlays
                 if (has_imgui_overlay)
@@ -1823,14 +1821,6 @@ int main()
                     log_viewer->render(input_snapshot);
             }
 
-            if (cover_sync_view)
-            {
-                if (cover_sync_view->is_closed())
-                    cover_sync_view = nullptr;
-                else
-                    cover_sync_view->render(input_snapshot);
-            }
-
             if (pkgi_dialog_is_open())
             {
                 pkgi_do_dialog();
@@ -1941,17 +1931,6 @@ int main()
                         break;
                     case MenuResultOpenLogViewer:
                         log_viewer = std::make_unique<LogViewer>();
-                        break;
-                    case MenuResultSyncCovers:
-                        if (mode == ModeGames && db)
-                        {
-                            std::vector<DbItem*> items;
-                            items.reserve(db->count());
-                            for (uint32_t i = 0; i < db->count(); ++i)
-                                items.push_back(db->get(i));
-                            cover_sync_view = std::make_unique<CoverSyncView>(
-                                    &config, std::move(items));
-                        }
                         break;
                     }
                 }

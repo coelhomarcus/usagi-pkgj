@@ -26,7 +26,6 @@ typedef enum
     MenuSort,
     MenuFilter,
     MenuGridView,
-    MenuSyncCovers,
     MenuRefresh,
     MenuConfigEdit,
     MenuLogView,
@@ -61,7 +60,6 @@ static const MenuEntry menu_entries[] = {
 
         {MenuText, "Display:", 0},
         {MenuGridView, "Grid view (games)", 0},
-        {MenuSyncCovers, "Sync all covers (games)", 0},
 
         {MenuRefresh, "Refresh", 0},
         {MenuConfigEdit, "Edit config.txt", 0},
@@ -209,12 +207,6 @@ int pkgi_do_menu(pkgi_input* input)
             menu_delta = -1;
             return 1;
         }
-        else if (type == MenuSyncCovers)
-        {
-            menu_result = MenuResultSyncCovers;
-            menu_delta = -1;
-            return 1;
-        }
         else if (type == MenuBack)
         {
             menu_result = MenuResultBackToBrowse;
@@ -284,7 +276,7 @@ int pkgi_do_menu(pkgi_input* input)
         char text[64];
         if (type == MenuSearch || type == MenuSearchClear || type == MenuText ||
             type == MenuRefresh || type == MenuConfigEdit || type == MenuLogView ||
-            type == MenuSyncCovers || type == MenuBack || type == MenuShow)
+            type == MenuBack || type == MenuShow)
         {
             pkgi_strncpy(text, sizeof(text), entry->text);
         }

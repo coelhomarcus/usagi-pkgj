@@ -46,10 +46,6 @@ Downloads are serialized through a single global `WorkerSlot` (`src/workerpool.h
 
 The grid only ever keeps `ImageFetcher` instances (and therefore GPU textures) for the currently visible page (`GridImageCache` in `src/gridview.cpp`) — as you scroll, cells that leave the visible window are evicted and their textures freed. This is the "pagination" that keeps VRAM usage bounded regardless of how large the games list is.
 
-### Optional bulk sync
-
-`src/coversyncview.cpp` implements **"Sync all covers (games)"** (same triangle menu): walks the full games list and fetches every cover not yet cached, one at a time over the same `WorkerSlot`, with a progress dialog. Cancelable at any time — already-synced covers stay cached, so a later run only fetches what's still missing (`ImageFetcher`'s disk-cache check is checked before any network call).
-
 ### Placeholder art
 
 Cells without a cached cover yet show `assets/covers/loading.png` (while fetching) or `assets/covers/noimage.png` (fetch failed / no source has this title) instead of a plain colored box. Embedded into the `.vpk` the same way as every other bundled Vita UI asset (see `cross.cmake`'s `add_assets`); the host simulator has no such embedding step and falls back to a plain rect+text placeholder there.
@@ -300,11 +296,10 @@ Non-exhaustive list of what differs from [blastrock/pkgj](https://github.com/bla
 | Area | Files | Description |
 |------|-------|-------------|
 | Grid view | `src/gridview.{hpp,cpp}` (new) | Cover-art grid rendering, input, and per-visible-cell texture cache (`GridImageCache`) for `ModeGames` |
-| Cover sync | `src/coversyncview.{hpp,cpp}` (new) | Optional bulk cover-download dialog, triggered from the options menu |
 | Cover fetching | `src/imagefetcher.{hpp,cpp}` | Reworked to try an ordered list of sources per title (HexFlow PNG → PS Store JPEG fallback) instead of a single URL; PNG decode goes through `vita2d_load_PNG_buffer` |
 | Cover assets | `assets/covers/noimage.png`, `assets/covers/loading.png` | Grid cell placeholder art, embedded like other bundled UI assets |
 | Config | `src/config.{hpp,cpp}` | Added `grid_view` |
-| Menu | `src/menu.{hpp,cpp}` | Added "Grid view (games)" toggle and "Sync all covers (games)" entries |
+| Menu | `src/menu.{hpp,cpp}` | Added "Grid view (games)" toggle |
 | Main loop | `src/pkgi.{hpp,cpp}` | Dispatches to the grid or list renderer based on `config.grid_view`; alphabetical name-group-jump helpers and the OK/cancel button-label helpers moved out of the file's anonymous namespace so other translation units can call them |
 | GameView | `src/gameview.{hpp,cpp}` | Removed the PS Store description panel and the View→Panel→SubItem focus hierarchy (the left cover column has nothing interactive left to "enter"); opening the view now focuses "Install Game" directly |
 | Removed | `src/annotationdb.{hpp,cpp}`, `src/screenshotfetcher.{hpp,cpp}`, `src/descriptionfetcher.{hpp,cpp}` | Personal flags/comments, GameView screenshot strip, and PS Store description — all dropped |

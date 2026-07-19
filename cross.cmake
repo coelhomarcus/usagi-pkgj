@@ -48,6 +48,10 @@ add_assets(assets
   assets/imgui_f_cg.gxp
   assets/covers/vita_noimage.png
   assets/covers/vita_loading.png
+  assets/flags/usa.png
+  assets/flags/eur.png
+  assets/flags/jpn.png
+  assets/flags/asa.png
 )
 
 add_executable(pkgj
@@ -67,8 +71,8 @@ add_executable(pkgj
   src/browserview.cpp
   src/gameview.cpp
   src/gridview.cpp
-  src/coversyncview.cpp
   src/coverplaceholder.cpp
+  src/regionflag.cpp
   src/logbuffer.cpp
   src/logviewer.cpp
   src/patchinfo.cpp

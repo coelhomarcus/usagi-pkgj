@@ -61,8 +61,8 @@ if(BUILD_SIM)
     src/browserview.cpp
     src/gameview.cpp
     src/gridview.cpp
-    src/coversyncview.cpp
     src/coverplaceholder.cpp
+    src/regionflag.cpp
     src/imagefetcher.cpp
     src/curlhttp.cpp
     src/thumbnailfetcher.cpp

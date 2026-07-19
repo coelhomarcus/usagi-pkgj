@@ -31,10 +31,11 @@ static vita2d_texture* sim_load_image_file(const char* path)
 namespace
 {
 // Default cover source: vertical PS Vita box art curated by the HexFlow
-// project (https://github.com/Andiweli/HexFlow-Covers). Titles missing from
-// this set fall back to the PlayStation Store below.
+// project (https://github.com/Andiweli/HexFlow-Covers), served from this
+// fork's own mirror (https://github.com/coelhomarcus/HexFlow-Covers).
+// Titles missing from this set fall back to the PlayStation Store below.
 constexpr const char* kDefaultCoverBaseUrl =
-        "https://raw.githubusercontent.com/Andiweli/HexFlow-Covers/main/Covers/PSVita";
+        "https://raw.githubusercontent.com/coelhomarcus/HexFlow-Covers/main/Covers/PSVita";
 
 std::string get_store_image_url(DbItem* item)
 {

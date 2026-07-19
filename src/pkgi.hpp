@@ -109,6 +109,10 @@ typedef void* pkgi_texture;
 
 pkgi_texture pkgi_load_png_raw(const void* data, uint32_t size);
 void pkgi_draw_texture(pkgi_texture texture, int x, int y);
+// Like pkgi_draw_texture, but scaled to an exact w x h box regardless of
+// the texture's native size — used for the region-flag badges, whose
+// embedded resolution doesn't necessarily match a text row's height.
+void pkgi_draw_texture_scaled(pkgi_texture texture, int x, int y, int w, int h);
 
 void pkgi_clip_set(int x, int y, int w, int h);
 void pkgi_clip_remove(void);

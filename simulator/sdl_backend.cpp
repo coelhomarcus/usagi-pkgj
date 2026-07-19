@@ -470,6 +470,14 @@ void pkgi_draw_texture(pkgi_texture texture, int x, int y)
     SDL_RenderCopy(g_sdl_renderer, tex, nullptr, &dst);
 }
 
+void pkgi_draw_texture_scaled(pkgi_texture texture, int x, int y, int w, int h)
+{
+    if (!texture) return;
+    SDL_Texture* tex = static_cast<SDL_Texture*>(texture);
+    const SDL_Rect dst{x, y, w, h};
+    SDL_RenderCopy(g_sdl_renderer, tex, nullptr, &dst);
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // ImGui font texture creation (called from sim_main.cpp)
 // ──────────────────────────────────────────────────────────────────────────────
