@@ -251,7 +251,6 @@ Config pkgi_load_config()
         config.psp_games_url = default_psp_games_url;
         config.psp_dlcs_url = default_psp_dlcs_url;
         config.comppack_url = default_comppack_url;
-        config.thumbnail_url = "";
         config.thumbnail_folder = "";
         config.thumbnail_size = 2;
         config.sort = SortByName;
@@ -328,8 +327,6 @@ Config pkgi_load_config()
                 config.psp_dlcs_url = value;
             else if (pkgi_stricmp(key, "url_comppack") == 0)
                 config.comppack_url = value;
-            else if (pkgi_stricmp(key, "thumbnail_url") == 0)
-                config.thumbnail_url = value;
             else if (pkgi_stricmp(key, "thumbnail_folder") == 0)
                 config.thumbnail_folder = value;
             else if (pkgi_stricmp(key, "thumbnail_size") == 0)
@@ -421,12 +418,6 @@ void pkgi_save_config(const Config& config)
                 entry.name.c_str(),
                 entry.url.c_str());
     }
-    if (!config.thumbnail_url.empty())
-        len += pkgi_snprintf(
-                data + len,
-                sizeof(data) - len,
-                "thumbnail_url %s\n",
-                config.thumbnail_url.c_str());
     if (!config.thumbnail_folder.empty())
         len += pkgi_snprintf(
                 data + len,

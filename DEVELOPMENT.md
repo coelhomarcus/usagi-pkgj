@@ -27,7 +27,7 @@ This fork also removes a few features that existed on top of upstream at various
 
 ### What it does
 
-- Toggle **"Grid view (games)"** in the triangle options menu to switch the PS Vita games list between the classic text list and a cover-art grid (3 columns × 2 rows per page).
+- Toggle **"Grid view (games)"** in the triangle options menu to switch the PS Vita games list between the classic text list and a cover-art grid (4 columns × 2 rows per page).
 - Selecting a cell and pressing X opens the same GameView detail screen the list uses.
 - Triangle still opens the options menu from the grid; L1/R1 still jump alphabetically by name group, same as the list.
 
@@ -38,9 +38,7 @@ Implemented in `ImageFetcher` (`src/imagefetcher.{hpp,cpp}`), shared by GameView
 1. **[HexFlow-Covers](https://github.com/Andiweli/HexFlow-Covers)** — vertical PS Vita box art (PNG), the default source.
 2. **PlayStation Store** — JPEG cover, used as a fallback for titles HexFlow doesn't have.
 
-Setting `thumbnail_url` in `config.txt` overrides both with a custom single source (`{thumbnail_url}/{titleid}.jpg`) — matches the pre-existing custom-thumbnail behavior.
-
-Downloads are serialized through a single global `WorkerSlot` (`src/workerpool.hpp`) — only one cover downloads at a time, on-device or in the simulator — and cached to disk (`thumbnail_folder`, default `ux0:usagi-pkgj/cover`) so a title's cover is only ever fetched once.
+Downloads run through a small global `WorkerPool` (`src/workerpool.hpp`, 3 slots) — up to 3 covers download concurrently, on-device or in the simulator — and are cached to disk (`thumbnail_folder`, default `ux0:usagi-pkgj/cover`) so a title's cover is only ever fetched once. The pool de-duplicates by task_id across all slots, since the same cover can be wanted by two independent `ImageFetcher`s at once (e.g. the grid and GameView, for a title visible in both).
 
 ### Pagination / memory
 

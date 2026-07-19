@@ -31,11 +31,9 @@ struct ImageFetchResult
 // Fetches a game's cover image, trying an ordered list of sources and
 // falling back to the next one on a 404/failure.
 //
-// Default (no config->thumbnail_url): tries the HexFlow-Covers box-art PNG
-// first (folder picked from `mode` — PS Vita/PSP are vertical, PSX is
-// square), then falls back to the PlayStation Store JPEG if the title isn't
-// in that set. If config->thumbnail_url is set, it is the only source tried
-// (matches the documented "custom cover source" override).
+// Tries the HexFlow-Covers box-art PNG first (folder picked from `mode` —
+// PS Vita/PSP are vertical, PSX is square), then falls back to the
+// PlayStation Store JPEG if the title isn't in that set.
 class ImageFetcher
 {
 public:
@@ -55,7 +53,7 @@ public:
     ~ImageFetcher();
 
     // Must be called from the MAIN thread every frame.
-    // Retries submission to the global WorkerSlot while the slot is busy.
+    // Retries submission to the global WorkerPool while every slot is busy.
     vita2d_texture* get_texture();
     Status          get_status();
 
@@ -71,6 +69,7 @@ private:
             const Config* config, DbItem* item, Mode mode);
 
     bool   _submitted{false};       // true once the slot accepted the task
+    bool   _disk_checked{false};    // true once the on-disk cache check ran
     Status _status{Status::Pending};
 
     // Slow-path result from the worker (released once processed).
@@ -80,7 +79,7 @@ private:
     bool            _upload_pending{false};
     std::string     _pending_image_path;
 
-    // Try to hand the download task to WorkerSlot::image_worker().
+    // Try to hand the download task to WorkerPool::image_workers().
     // Called every frame via get_status() until the slot accepts it.
     void _try_submit();
 };

@@ -136,16 +136,6 @@ std::vector<ImageFetcher::Source> ImageFetcher::_build_sources(
             ? config->thumbnail_folder
             : "ux0:usagi-pkgj/cover";
 
-    // A custom thumbnail_url is an explicit user override — it is the only
-    // source tried, matching the documented behavior (no PSN fallback).
-    if (config && !config->thumbnail_url.empty())
-    {
-        return {
-                {fmt::format("{}/{}.jpg", folder, item->titleid),
-                 fmt::format("{}/{}.jpg", config->thumbnail_url, item->titleid)},
-        };
-    }
-
     return {
             // 1) HexFlow-Covers box art (PNG) — default source.
             {fmt::format("{}/{}.png", folder, item->titleid),
@@ -163,12 +153,12 @@ ImageFetcher::ImageFetcher(const Config* config, DbItem* item, Mode mode)
 {
     ensure_image_folder(config);
     // Download is NOT started here.  get_status() / get_texture() drive
-    // _try_submit() every frame until the WorkerSlot accepts the task.
+    // _try_submit() every frame until the WorkerPool accepts the task.
 }
 
 ImageFetcher::~ImageFetcher()
 {
-    // The worker thread is owned by the global WorkerSlot singleton and
+    // The worker thread is owned by the global WorkerPool singleton and
     // runs to natural completion — we never block here.
     // We simply drop _result; if the worker is still writing to it the
     // shared_ptr keeps it alive until the worker releases its own ref.
@@ -186,31 +176,43 @@ ImageFetcher::~ImageFetcher()
 }
 
 // ── _try_submit ──────────────────────────────────────────────────────────────
-// Called every frame (via get_status) until the WorkerSlot accepts the task.
+// Called every frame (via get_status) until the WorkerPool accepts the task.
 void ImageFetcher::_try_submit()
 {
     // ── Fast path: is any candidate already cached on disc? ───────────────
     // Checked in priority order so a higher-priority source that shows up
     // later (e.g. after a bulk sync) is preferred over a stale fallback.
-    for (const auto& src : _sources)
+    //
+    // Only done ONCE (_disk_checked), not on every retry: the pool has a
+    // small, fixed slot count, so when many grid cells want covers at once
+    // (up to 8 now, 4 columns x 2 rows), most instances still spend several
+    // frames retrying here while they wait for a free slot. Nothing else
+    // writes to these cache paths mid-run, so a miss now will still be a
+    // miss next frame — re-stat'ing (and re-logging, on Vita3K) both
+    // candidates every single frame while queued was pure waste.
+    if (!_disk_checked)
     {
-        if (pkgi_file_exists(src.path.c_str()))
+        _disk_checked = true;
+        for (const auto& src : _sources)
         {
-            _pending_image_path = src.path;
-            _upload_pending      = true;
-            _submitted           = true;
-            return; // status stays Pending until get_texture() builds the texture
+            if (pkgi_file_exists(src.path.c_str()))
+            {
+                _pending_image_path = src.path;
+                _upload_pending      = true;
+                _submitted           = true;
+                return; // status stays Pending until get_texture() builds the texture
+            }
+        }
+
+        if (_sources.empty())
+        {
+            _status    = Status::Error;
+            _submitted = true;
+            return;
         }
     }
 
-    if (_sources.empty())
-    {
-        _status    = Status::Error;
-        _submitted = true;
-        return;
-    }
-
-    // ── Slow path: submit download to the global WorkerSlot ───────────────
+    // ── Slow path: submit download to the global WorkerPool ───────────────
     // All data captured by VALUE — the lambda must not reference 'this'.
     // If ImageFetcher is destroyed before the worker finishes, the
     // shared_ptr keeps ImageFetchResult alive until both sides drop it.
@@ -218,7 +220,7 @@ void ImageFetcher::_try_submit()
     const std::vector<Source> sources = _sources;
     const std::string task_id = sources.front().path; // stable per-title id
 
-    if (!WorkerSlot::image_worker().try_submit(
+    if (!WorkerPool::image_workers().try_submit(
                 task_id,
                 [result, sources]()
                 {

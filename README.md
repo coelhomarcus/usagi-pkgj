@@ -59,7 +59,6 @@ Usagi PKGj is shipped with valid default URLs. If you wish to change some settin
 | `install_psp_psx_location uma0:` | Install PSP and PSX games on `uma0:` |
 | `no_version_check 1` | Do not check for update when starting Usagi PKGj |
 | `grid_view 0` | Show the games list as a plain text list instead of the cover-art grid (grid is the default) |
-| `thumbnail_url <URL>` | Use a custom cover source (`{thumbnail_url}/{titleid}.jpg`) instead of the default HexFlow/PS Store lookup |
 | `thumbnail_folder <path>` | Local folder covers are cached in (default: `ux0:usagi-pkgj/cover`) |
 
 # Q&A

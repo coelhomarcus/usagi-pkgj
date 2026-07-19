@@ -28,6 +28,8 @@ extern "C"
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_ttf.h>
 
+#include <curl/curl.h>
+
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -240,6 +242,12 @@ void pkgi_start(void)
 
     // Scale renderer output to always match 960×544 logical size
     SDL_RenderSetLogicalSize(g_sdl_renderer, VITA_WIDTH, VITA_HEIGHT);
+
+    // Must happen once, before any thread touches libcurl (WorkerPool's
+    // cover-fetch threads, VitaHttp's package-download thread) — curl_easy_init()
+    // auto-inits lazily otherwise, and libcurl explicitly documents that
+    // implicit init as not thread-safe. Mirrors src/vita.cpp's real-Vita init.
+    curl_global_init(CURL_GLOBAL_ALL);
 
     g_font = load_best_font(17);
 

@@ -65,7 +65,6 @@ if(BUILD_SIM)
     src/regionflag.cpp
     src/imagefetcher.cpp
     src/curlhttp.cpp
-    src/thumbnailfetcher.cpp
     src/logbuffer.cpp
     src/logviewer.cpp
     src/menu.cpp
