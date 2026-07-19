@@ -3,6 +3,7 @@
 #include "coverplaceholder.hpp"
 #include "imagefetcher.hpp"
 #include "imgui.hpp"
+#include "log.hpp"
 extern "C"
 {
 #include "style.h"
@@ -31,6 +32,7 @@ static inline float vita2d_texture_get_height(vita2d_texture* t)
 #endif
 
 #include <algorithm>
+#include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -55,23 +57,57 @@ constexpr ImU32 kTitleCol       = IM_COL32(255, 255, 255, 255);
 constexpr ImU32 kStatusCol      = IM_COL32(160, 170, 200, 200);
 constexpr ImU32 kInstalledCol   = IM_COL32(50, 50, 255, 255);
 
+// Free-running, incremented once per pkgi_grid_tick() call. Declared before
+// GridImageCache since its inline member bodies reference it.
+uint32_t g_grid_frame = 0;
+
 // ── Per-cell cover texture cache ────────────────────────────────────────────
 // Keyed by titleid (never by DbItem*: TitleDatabase::reload() invalidates
 // every DbItem pointer, but titleids of surviving items stay valid).
-// v1: capacity == exactly the visible window, no prefetch/LRU slack — this
-// is the "pagination so it doesn't tax the Vita" the grid exists for: only
-// on-screen cover textures are ever resident in VRAM.
+//
+// Evicted entries are NOT destroyed immediately. Freeing a vita2d texture
+// shortly after it stops being used has been observed to crash Vita3K
+// inside its own Vulkan texture-upload path (VKTextureCache::
+// upload_texture_impl) — plausibly the emulator still has GPU work queued
+// against it even after vita2d_wait_rendering_done(). This is the first
+// screen in the app that ever holds more than one live cover texture at
+// once (GameView only ever has one), so it's the first to expose it.
+// Confirmed empirically: destroying eagerly (even staggered, a couple per
+// frame) still crashes; not destroying at all doesn't. So evicted entries
+// are "retired" into a queue and only actually freed after sitting unused
+// for a long cooldown, a few at a time — enough slack for whatever the
+// emulator (and, untested, real hardware) needs to fully finish with them,
+// while a hard cap still bounds worst-case leaked VRAM if the grid is
+// toggled on/off faster than the cooldown can drain.
 class GridImageCache
 {
+    using CacheMap = std::unordered_map<std::string, std::unique_ptr<ImageFetcher>>;
+
 public:
     void sync(const std::vector<DbItem*>& wanted, const Config& config)
     {
         for (DbItem* item : wanted)
         {
-            if (_cache.find(item->titleid) == _cache.end())
-                _cache.emplace(
-                        item->titleid,
-                        std::make_unique<ImageFetcher>(&config, item));
+            if (_cache.find(item->titleid) != _cache.end())
+                continue;
+
+            // Scrolled away and back before the cooldown elapsed: reuse the
+            // still-alive retired instance instead of restarting its
+            // download/decode and pushing another entry into the queue.
+            auto rit = std::find_if(
+                    _retired.begin(), _retired.end(),
+                    [&](const RetiredEntry& e)
+                    { return e.titleid == item->titleid; });
+            if (rit != _retired.end())
+            {
+                _cache.emplace(item->titleid, std::move(rit->fetcher));
+                _retired.erase(rit);
+                continue;
+            }
+
+            _cache.emplace(
+                    item->titleid,
+                    std::make_unique<ImageFetcher>(&config, item));
         }
 
         for (auto it = _cache.begin(); it != _cache.end();)
@@ -81,7 +117,7 @@ public:
                     wanted.end(),
                     [&](DbItem* item) { return item->titleid == it->first; });
             if (!still_wanted)
-                it = _cache.erase(it);
+                it = _retire_one(it);
             else
                 ++it;
         }
@@ -93,27 +129,69 @@ public:
         return it == _cache.end() ? nullptr : it->second.get();
     }
 
-    // Frees at most `budget` cached textures and reports whether the cache
-    // is now fully empty. Destroying an ImageFetcher can free a vita2d
-    // texture the GPU only just finished uploading (see pkgi_grid_tick's
-    // comment) — spreading a full-cache clear over several frames instead
-    // of destroying everything in one call keeps that batch small.
-    bool clear_incremental(int budget)
+    // Retires every currently-cached entry (does not destroy anything
+    // itself — see tick()). Called once when the grid stops being the
+    // active renderer.
+    void retire_all()
     {
-        while (budget > 0 && !_cache.empty())
+        for (auto it = _cache.begin(); it != _cache.end();)
+            it = _retire_one(it);
+    }
+
+    // Call once per frame. Destroys (frees the vita2d texture) at most
+    // kDestroyBudgetPerTick retired entries whose cooldown has elapsed,
+    // oldest first.
+    void tick(uint32_t now_frame)
+    {
+        int budget = kDestroyBudgetPerTick;
+        while (budget > 0 && !_retired.empty() &&
+               now_frame - _retired.front().retired_at_frame >=
+                       kRetireCooldownFrames)
         {
-            _cache.erase(_cache.begin());
+            _retired.pop_front();
             --budget;
         }
-        return _cache.empty();
     }
 
 private:
-    std::unordered_map<std::string, std::unique_ptr<ImageFetcher>> _cache;
+    struct RetiredEntry
+    {
+        std::string titleid;
+        std::unique_ptr<ImageFetcher> fetcher;
+        uint32_t retired_at_frame;
+    };
+
+    // Rough starting points, not principled constants — tune against real
+    // Vita3K/hardware behavior. See the class comment above.
+    static constexpr uint32_t kRetireCooldownFrames = 180; // ~3s @ 60fps
+    static constexpr size_t kMaxRetired = 24; // ~7.5MB worst case (~320KB/tex)
+    static constexpr int kDestroyBudgetPerTick = 1;
+
+    // Single point of eviction: moves _cache[it] into the retirement queue
+    // (enforcing the cap first) and returns the next valid _cache iterator,
+    // matching std::unordered_map::erase's return-value convention so
+    // callers can use it identically in an erase-during-iteration loop.
+    CacheMap::iterator _retire_one(CacheMap::iterator it)
+    {
+        if (_retired.size() >= kMaxRetired)
+        {
+            LOGFW("[GridImageCache] retirement queue full ({}), "
+                  "force-destroying oldest",
+                  kMaxRetired);
+            _retired.pop_front();
+        }
+        _retired.push_back(
+                {it->first, std::move(it->second), g_grid_frame});
+        return _cache.erase(it);
+    }
+
+    CacheMap _cache;
+    // FIFO by construction (push_back only, with non-decreasing
+    // g_grid_frame), so front() is always the oldest.
+    std::deque<RetiredEntry> _retired;
 };
 
 GridImageCache g_image_cache;
-bool g_deactivating = false;
 
 const char* status_badge(DbPresence presence, ImU32& out_color)
 {
@@ -456,25 +534,22 @@ GridResult pkgi_do_main_grid(
     return result;
 }
 
-// TEMPORARY DIAGNOSTIC: deactivation no longer frees any grid textures at
-// all (not even staggered — see the clear_incremental attempt this
-// replaced). Vita3K keeps crashing inside VKTextureCache::upload_texture_impl
-// on deactivate even with textures freed 1-2 at a time across several
-// frames, which rules out "freeing too many textures in one frame" as the
-// cause. This build intentionally leaks the cached ImageFetchers/textures
-// on deactivate instead of freeing them, to test whether the crash is tied
-// to the free/destroy call itself regardless of batching or timing. If
-// this build does NOT crash, that confirms it and points at a proper fix
-// (e.g. never destroying textures mid-session, only reusing a fixed pool);
-// if it STILL crashes, the cause is unrelated to texture destruction.
-// selected_item/first_item still leave the grid normally either way; only
-// GridImageCache's contents are affected. NOT a real fix — this leaks
-// VRAM for the rest of the session every time grid view is toggled off.
+// Retires (does not yet destroy — see pkgi_grid_tick) every cached cover
+// texture. Call when leaving ModeGames or when grid view is toggled off,
+// so a screen that's no longer shown doesn't keep holding them forever
+// (sync() would eventually retire them too, but only on its next call,
+// which may never come once the grid is inactive).
 void pkgi_grid_deactivate()
 {
-    (void)g_deactivating; // unused while this diagnostic is in place
+    g_image_cache.retire_all();
 }
 
+// Call every frame, regardless of whether the grid is the active renderer:
+// ages the retirement queue and destroys (frees the vita2d texture of)
+// whatever has cooled down long enough — see GridImageCache's class
+// comment for why destruction is delayed instead of immediate.
 void pkgi_grid_tick()
 {
+    ++g_grid_frame;
+    g_image_cache.tick(g_grid_frame);
 }
