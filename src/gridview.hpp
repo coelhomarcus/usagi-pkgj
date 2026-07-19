@@ -38,8 +38,13 @@ GridResult pkgi_do_main_grid(
         int font_height,
         int avail_height);
 
-// Drops every cached cover texture. Call when leaving ModeGames or when
-// grid view is toggled off, so textures aren't held in VRAM by a screen
-// that is no longer shown (sync() would eventually do this too, but only
-// on the next call, which may never come once the screen is inactive).
+// Starts releasing every cached cover texture, over the next few frames
+// (see pkgi_grid_tick). Call when leaving ModeGames or when grid view is
+// toggled off, so textures aren't held in VRAM by a screen that is no
+// longer shown (sync() would eventually do this too, but only on the next
+// call, which may never come once the screen is inactive).
 void pkgi_grid_deactivate();
+
+// Call every frame, regardless of whether the grid is the active renderer.
+// Pumps any pending texture cleanup started by pkgi_grid_deactivate().
+void pkgi_grid_tick();

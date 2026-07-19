@@ -1,5 +1,6 @@
 #include "gridview.hpp"
 
+#include "coverplaceholder.hpp"
 #include "imagefetcher.hpp"
 #include "imgui.hpp"
 extern "C"
@@ -34,32 +35,6 @@ static inline float vita2d_texture_get_height(vita2d_texture* t)
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-// "No image" / "Loading" skeleton art (assets/covers/*.png, same 250x320
-// aspect as the HexFlow covers themselves). Embedded like every other Vita
-// UI asset (see cross.cmake's add_assets + pkgi_load_png). Deliberately at
-// file scope, NOT inside the anonymous namespace below: the extern
-// _binary_..._start/_end symbols the macro declares must match the plain
-// (non-mangled) global symbols add_assets emits from raw assembly — inside
-// an anonymous namespace they'd get C++ linkage instead and fail to link
-// (same trap as pkgi.cpp's group-jump helpers). The simulator has no such
-// embedding step, so this returns null there and draw_cell falls back to
-// the plain rect+text placeholder.
-#ifndef PKGI_SIMULATOR
-vita2d_texture* get_placeholder_texture(bool loading)
-{
-    static vita2d_texture* noimage_tex =
-            reinterpret_cast<vita2d_texture*>(pkgi_load_png(covers_noimage));
-    static vita2d_texture* loading_tex =
-            reinterpret_cast<vita2d_texture*>(pkgi_load_png(covers_loading));
-    return loading ? loading_tex : noimage_tex;
-}
-#else
-vita2d_texture* get_placeholder_texture(bool /*loading*/)
-{
-    return nullptr;
-}
-#endif
 
 namespace
 {
@@ -118,9 +93,19 @@ public:
         return it == _cache.end() ? nullptr : it->second.get();
     }
 
-    void clear()
+    // Frees at most `budget` cached textures and reports whether the cache
+    // is now fully empty. Destroying an ImageFetcher can free a vita2d
+    // texture the GPU only just finished uploading (see pkgi_grid_tick's
+    // comment) — spreading a full-cache clear over several frames instead
+    // of destroying everything in one call keeps that batch small.
+    bool clear_incremental(int budget)
     {
-        _cache.clear();
+        while (budget > 0 && !_cache.empty())
+        {
+            _cache.erase(_cache.begin());
+            --budget;
+        }
+        return _cache.empty();
     }
 
 private:
@@ -128,6 +113,7 @@ private:
 };
 
 GridImageCache g_image_cache;
+bool g_deactivating = false;
 
 const char* status_badge(DbPresence presence, ImU32& out_color)
 {
@@ -213,7 +199,7 @@ void draw_cell(
                 status == ImageFetcher::Status::Downloading ||
                 status == ImageFetcher::Status::Pending;
 
-        vita2d_texture* placeholder = get_placeholder_texture(is_loading);
+        vita2d_texture* placeholder = pkgi_get_cover_placeholder(is_loading);
         if (placeholder)
         {
             draw_scaled(dl, placeholder, cov_min, box_w, box_h);
@@ -472,5 +458,21 @@ GridResult pkgi_do_main_grid(
 
 void pkgi_grid_deactivate()
 {
-    g_image_cache.clear();
+    g_deactivating = true;
+}
+
+// Called every frame regardless of whether the grid is the active
+// renderer, to pump any pending post-deactivation texture cleanup.
+//
+// Freeing several vita2d textures in the same frame (e.g. the whole
+// GridImageCache at once, up to kCellsPerPage of them) has been observed
+// to crash on Vita3K inside its Vulkan texture upload path — plausibly a
+// GPU-sync timing gap in the emulator that a single ImageFetcher freeing
+// its one texture (GameView's pre-grid usage pattern) never exercised.
+// Spreading the clear over a few frames, a couple of textures at a time,
+// is a mitigation for that, not a confirmed root-cause fix.
+void pkgi_grid_tick()
+{
+    if (g_deactivating)
+        g_deactivating = !g_image_cache.clear_incremental(2);
 }

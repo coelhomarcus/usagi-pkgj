@@ -62,6 +62,7 @@ if(BUILD_SIM)
     src/gameview.cpp
     src/gridview.cpp
     src/coversyncview.cpp
+    src/coverplaceholder.cpp
     src/imagefetcher.cpp
     src/curlhttp.cpp
     src/thumbnailfetcher.cpp

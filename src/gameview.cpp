@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include "coverplaceholder.hpp"
 #include "dialog.hpp"
 #include "file.hpp"
 #include "imgui.hpp"
@@ -196,29 +197,47 @@ void GameView::render()
         }
         else
         {
+            const bool is_loading =
+                    img_stat == ImageFetcher::Status::Downloading;
+            vita2d_texture* placeholder =
+                    pkgi_get_cover_placeholder(is_loading);
+
             ImVec2 pm = ImGui::GetCursorScreenPos();
             ImGui::Dummy(ImVec2(cover_w, cover_h));
-            ldl->AddRectFilled(
-                    pm,
-                    {pm.x + cover_w, pm.y + cover_h},
-                    IM_COL32(18, 22, 40, 220),
-                    4.f);
-            ldl->AddRect(
-                    pm,
-                    {pm.x + cover_w, pm.y + cover_h},
-                    IM_COL32(70, 80, 110, 255),
-                    4.f);
-            const char* l1 =
-                    (img_stat == ImageFetcher::Status::Downloading)
-                    ? "Downloading"
-                    : "No image";
-            const char* l2 =
-                    (img_stat == ImageFetcher::Status::Downloading)
-                    ? "cover..."
-                    : nullptr;
-            draw_centered_status_text(
-                    ldl, pm, cover_w, cover_h, l1, l2,
-                    IM_COL32(160, 170, 200, 200));
+
+            if (placeholder)
+            {
+                float tw =
+                        static_cast<float>(vita2d_texture_get_width(placeholder));
+                float th =
+                        static_cast<float>(vita2d_texture_get_height(placeholder));
+                if (tw > cover_w) { th = th * cover_w / tw; tw = cover_w; }
+                if (th > cover_h) { tw = tw * cover_h / th; th = cover_h; }
+                const float ox = pm.x + (cover_w - tw) * 0.5f;
+                const float oy = pm.y + (cover_h - th) * 0.5f;
+                ldl->AddImage(
+                        reinterpret_cast<ImTextureID>(placeholder),
+                        ImVec2(ox, oy),
+                        ImVec2(ox + tw, oy + th));
+            }
+            else
+            {
+                ldl->AddRectFilled(
+                        pm,
+                        {pm.x + cover_w, pm.y + cover_h},
+                        IM_COL32(18, 22, 40, 220),
+                        4.f);
+                ldl->AddRect(
+                        pm,
+                        {pm.x + cover_w, pm.y + cover_h},
+                        IM_COL32(70, 80, 110, 255),
+                        4.f);
+                const char* l1 = is_loading ? "Downloading" : "No image";
+                const char* l2 = is_loading ? "cover..." : nullptr;
+                draw_centered_status_text(
+                        ldl, pm, cover_w, cover_h, l1, l2,
+                        IM_COL32(160, 170, 200, 200));
+            }
         }
 
         ImGui::EndChild(); // ##lc

@@ -1716,6 +1716,7 @@ int main()
                     pkgi_grid_deactivate();
                 grid_active_last_frame = grid_active_now;
             }
+            pkgi_grid_tick();
 
             // Browse view renders its own header/footer; skip pkgi_do_head()
             // in that state to avoid a conflicting title bar.
@@ -1844,6 +1845,18 @@ int main()
                 reposition();
             }
 
+            // Submit this frame's ImGui draw data (grid cover images,
+            // gameview, dialogs, ...) BEFORE the menu draws. The menu is
+            // still raw vita2d (pkgi_draw_rect/pkgi_draw_text, immediate),
+            // while ImGui batches everything and only actually reaches the
+            // GPU command stream here — submitting after the menu would
+            // always paint ImGui content on top of it regardless of call
+            // order elsewhere in the frame, hiding the menu behind e.g. the
+            // grid's cover images.
+            ImGui::EndFrame();
+            ImGui::Render();
+            pkgi_imgui_render(ImGui::GetDrawData());
+
             if (pkgi_menu_is_open())
             {
                 if (pkgi_do_menu(&input))
@@ -1943,11 +1956,6 @@ int main()
                     }
                 }
             }
-
-            ImGui::EndFrame();
-            ImGui::Render();
-
-            pkgi_imgui_render(ImGui::GetDrawData());
 
             pkgi_swap();
         }
