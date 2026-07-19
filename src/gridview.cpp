@@ -1,6 +1,7 @@
 #include "gridview.hpp"
 
 #include "coverplaceholder.hpp"
+#include "gridtexturepool.hpp"
 #include "imagefetcher.hpp"
 #include "imgui.hpp"
 #include "regionflag.hpp"
@@ -32,7 +33,6 @@ static inline float vita2d_texture_get_height(vita2d_texture* t)
 #endif
 
 #include <algorithm>
-#include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -57,45 +57,30 @@ constexpr ImU32 kTitleCol       = IM_COL32(255, 255, 255, 255);
 constexpr ImU32 kStatusCol      = IM_COL32(160, 170, 200, 200);
 constexpr ImU32 kInstalledCol   = IM_COL32(50, 50, 255, 255);
 
-// Free-running, incremented once per pkgi_grid_tick() call. Declared before
-// GridImageCache since its inline member bodies reference it.
-uint32_t g_grid_frame = 0;
-
-// Cap on how many cover textures are decoded + GPU-uploaded in a single
-// frame. Reset to 0 at the top of every pkgi_do_main_grid() draw. Fast
-// scrolling makes a whole page (up to kCellsPerPage) of covers become
-// visible at once; materializing them all in one frame floods Vita3K's
-// async GPU command queue, which both hitches and widens the window during
-// which a just-retired texture can still be referenced by a not-yet-executed
-// upload command (the use-after-free that crashes VKTextureCache). Spreading
-// creation over a few frames keeps that window small; cells whose texture
-// isn't ready yet just show the placeholder for an extra frame or two.
+// Cap on how many covers are decoded + blitted into the texture pool in a
+// single frame. Reset to 0 at the top of every pkgi_do_main_grid() draw.
+// Fast scrolling makes a whole page (up to kCellsPerPage) of covers become
+// visible at once; decoding and blitting all of them in one frame is real
+// CPU work (PNG/JPEG decode, then a pixel copy) that would show up as a
+// frame hitch. Spreading it over a few frames keeps each frame's cost
+// bounded; cells whose cover isn't blitted yet just show the placeholder
+// for an extra frame or two. (This budget is unrelated to GPU texture
+// lifetime safety — see GridTexturePool for that; it exists purely to keep
+// per-frame decode/blit cost smooth.)
 int g_tex_uploads_this_frame = 0;
 constexpr int kMaxTexUploadsPerFrame = 2;
 
-// ── Per-cell cover texture cache ────────────────────────────────────────────
+// ── Per-cell cover download/decode coordination ─────────────────────────────
 // Keyed by titleid (never by DbItem*: TitleDatabase::reload() invalidates
 // every DbItem pointer, but titleids of surviving items stay valid).
 //
-// Evicted entries are NOT destroyed immediately. Freeing a vita2d texture
-// shortly after it stops being used has been observed to crash Vita3K
-// inside its own Vulkan texture-upload path (VKTextureCache::
-// upload_texture_impl reads the freed source buffer at a guard page) —
-// the emulator still has GPU work queued against it even after
-// vita2d_wait_rendering_done(). This is the first screen in the app that
-// ever holds more than one live cover texture at once (GameView only ever
-// has one), so it's the first to expose it.
-//
-// So evicted entries are "retired" into a queue and only freed once they've
-// sat unused for a cooldown long enough for any queued GPU command to have
-// executed. The cooldown is honored WITHOUT EXCEPTION: an earlier version
-// force-freed the oldest entry when a hard cap was hit, which under fast
-// scrolling (a full page retires every few frames) became the common path
-// and freed textures barely older than one frame — reintroducing exactly
-// this crash. There is no cap now; instead the queue is bounded implicitly
-// by rate-limiting how many textures are created per frame
-// (kMaxTexUploadsPerFrame above), so retirements — and thus queued VRAM —
-// can't outrun the cooldown drain.
+// Owns each visible cell's ImageFetcher — the download/decode-in-progress
+// state — for as long as it's on screen. This is NOT where the displayed
+// texture lives (see GridTexturePool for that); an ImageFetcher instance
+// here never holds a lasting vita2d_texture, so destroying one when its
+// title scrolls off-screen is always safe, immediately, no cooldown needed
+// (unlike the grid's very first texture-ownership design, which crashed
+// Vita3K this same way — see GridTexturePool's comment for the full story).
 class GridImageCache
 {
     using CacheMap = std::unordered_map<std::string, std::unique_ptr<ImageFetcher>>;
@@ -107,20 +92,6 @@ public:
         {
             if (_cache.find(item->titleid) != _cache.end())
                 continue;
-
-            // Scrolled away and back before the cooldown elapsed: reuse the
-            // still-alive retired instance instead of restarting its
-            // download/decode and pushing another entry into the queue.
-            auto rit = std::find_if(
-                    _retired.begin(), _retired.end(),
-                    [&](const RetiredEntry& e)
-                    { return e.titleid == item->titleid; });
-            if (rit != _retired.end())
-            {
-                _cache.emplace(item->titleid, std::move(rit->fetcher));
-                _retired.erase(rit);
-                continue;
-            }
 
             _cache.emplace(
                     item->titleid,
@@ -134,7 +105,7 @@ public:
                     wanted.end(),
                     [&](DbItem* item) { return item->titleid == it->first; });
             if (!still_wanted)
-                it = _retire_one(it);
+                it = _cache.erase(it);
             else
                 ++it;
         }
@@ -146,68 +117,24 @@ public:
         return it == _cache.end() ? nullptr : it->second.get();
     }
 
-    // Retires every currently-cached entry (does not destroy anything
-    // itself — see tick()). Called once when the grid stops being the
-    // active renderer.
-    void retire_all()
+    // Drops every cached fetcher (download/decode state) — NOT the texture
+    // pool, whose slots stay populated so scrolling back to a title already
+    // shown shows its cover instantly with no re-download. Called once when
+    // the grid stops being the active renderer, so a screen that's no
+    // longer shown doesn't keep its download state around forever (sync()
+    // would eventually evict it too, but only on its next call, which may
+    // never come once the grid is inactive).
+    void clear()
     {
-        for (auto it = _cache.begin(); it != _cache.end();)
-            it = _retire_one(it);
-    }
-
-    // Call once per frame. Frees the vita2d texture of retired entries whose
-    // cooldown has elapsed, oldest first, up to kDrainBudgetPerTick of them
-    // (so a whole page retiring at once — e.g. on deactivate — drains over a
-    // few frames rather than in one hitch). The budget is comfortably above
-    // the steady retirement rate (bounded by kMaxTexUploadsPerFrame), so the
-    // queue never grows unbounded.
-    void tick(uint32_t now_frame)
-    {
-        int budget = kDrainBudgetPerTick;
-        while (budget > 0 && !_retired.empty() &&
-               now_frame - _retired.front().retired_at_frame >=
-                       kRetireCooldownFrames)
-        {
-            _retired.pop_front();
-            --budget;
-        }
+        _cache.clear();
     }
 
 private:
-    struct RetiredEntry
-    {
-        std::string titleid;
-        std::unique_ptr<ImageFetcher> fetcher;
-        uint32_t retired_at_frame;
-    };
-
-    // ~0.75s at 60fps: far beyond any plausible depth of Vita3K's queued GPU
-    // command buffer, so a texture freed after this has certainly stopped
-    // being referenced by pending uploads. Never bypassed (see class comment).
-    static constexpr uint32_t kRetireCooldownFrames = 45;
-    // > steady retirement rate (<= kMaxTexUploadsPerFrame), so the drain keeps
-    // up; higher only smooths a burst (deactivate) over a couple of frames.
-    static constexpr int kDrainBudgetPerTick = 4;
-
-    // Single point of eviction: moves _cache[it] into the retirement queue
-    // (never freeing here — tick() does that after the cooldown) and returns
-    // the next valid _cache iterator, matching std::unordered_map::erase's
-    // return-value convention so callers can use it identically in an
-    // erase-during-iteration loop.
-    CacheMap::iterator _retire_one(CacheMap::iterator it)
-    {
-        _retired.push_back(
-                {it->first, std::move(it->second), g_grid_frame});
-        return _cache.erase(it);
-    }
-
     CacheMap _cache;
-    // FIFO by construction (push_back only, with non-decreasing
-    // g_grid_frame), so front() is always the oldest.
-    std::deque<RetiredEntry> _retired;
 };
 
 GridImageCache g_image_cache;
+GridTexturePool g_texture_pool;
 
 const char* status_badge(DbPresence presence, ImU32& out_color)
 {
@@ -264,6 +191,44 @@ void draw_scaled(ImDrawList* dl, vita2d_texture* tex, ImVec2 box_min, float box_
             ImVec2(ox + tw, oy + th));
 }
 
+// Same box-fit as draw_scaled(), but for a GridTexturePool entry: the
+// texture is a fixed-size pool slot, so the fit has to be computed from the
+// cover's actual content size within it (content_w/content_h), not the
+// slot's own full width/height — and only the matching UV sub-rect (the
+// content region, excluding letterbox padding) is drawn.
+void draw_scaled_uv(
+        ImDrawList* dl,
+        vita2d_texture* tex,
+        ImVec2 box_min,
+        float box_w,
+        float box_h,
+        float content_w,
+        float content_h,
+        ImVec2 uv_min,
+        ImVec2 uv_max)
+{
+    float tw = content_w;
+    float th = content_h;
+    if (tw > box_w)
+    {
+        th = th * box_w / tw;
+        tw = box_w;
+    }
+    if (th > box_h)
+    {
+        tw = tw * box_h / th;
+        th = box_h;
+    }
+    const float ox = box_min.x + (box_w - tw) * 0.5f;
+    const float oy = box_min.y + (box_h - th) * 0.5f;
+    dl->AddImage(
+            reinterpret_cast<ImTextureID>(tex),
+            ImVec2(ox, oy),
+            ImVec2(ox + tw, oy + th),
+            uv_min,
+            uv_max);
+}
+
 void draw_cell(
         ImDrawList* dl,
         DbItem* item,
@@ -280,26 +245,40 @@ void draw_cell(
     const float box_h = cov_max.y - cov_min.y;
 
     ImageFetcher* fetcher = g_image_cache.get(item->titleid);
-    vita2d_texture* tex   = nullptr;
-    if (fetcher)
+
+    // 1) Already in the texture pool (from an earlier visit, possibly under
+    //    a since-destroyed ImageFetcher — the pool outlives those) — just
+    //    draw it, no decode needed.
+    bool drawn = false;
+    if (auto found = g_texture_pool.find(item->titleid))
     {
-        // Rate-limit texture creation across the whole page this frame: only
-        // let get_texture() decode+upload if we're under budget. A cell whose
-        // cover is downloaded but not yet uploaded just shows the placeholder
-        // for another frame. (raw_texture() != nullptr means it already
-        // exists, so this call won't create one and shouldn't count.)
-        const bool had_tex = fetcher->raw_texture() != nullptr;
-        const bool allow   = g_tex_uploads_this_frame < kMaxTexUploadsPerFrame;
-        tex = fetcher->get_texture(allow);
-        if (!had_tex && tex)
+        draw_scaled_uv(
+                dl, found->tex, cov_min, box_w, box_h,
+                found->content_w, found->content_h,
+                found->uv_min, found->uv_max);
+        drawn = true;
+    }
+    // 2) Not in the pool yet: if the download has finished and we're still
+    //    under this frame's decode/blit budget, decode it now and store it.
+    else if (fetcher && g_tex_uploads_this_frame < kMaxTexUploadsPerFrame)
+    {
+        if (auto cover = fetcher->take_decoded_cover())
+        {
+            const GridTexturePool::Entry entry =
+                    g_texture_pool.store(item->titleid, *cover);
+            if (entry.tex)
+            {
+                draw_scaled_uv(
+                        dl, entry.tex, cov_min, box_w, box_h,
+                        entry.content_w, entry.content_h,
+                        entry.uv_min, entry.uv_max);
+                drawn = true;
+            }
             ++g_tex_uploads_this_frame;
+        }
     }
 
-    if (tex)
-    {
-        draw_scaled(dl, tex, cov_min, box_w, box_h);
-    }
-    else
+    if (!drawn)
     {
         const auto status = fetcher ? fetcher->get_status()
                                      : ImageFetcher::Status::Pending;
@@ -580,22 +559,12 @@ GridResult pkgi_do_main_grid(
     return result;
 }
 
-// Retires (does not yet destroy — see pkgi_grid_tick) every cached cover
-// texture. Call when leaving ModeGames or when grid view is toggled off,
-// so a screen that's no longer shown doesn't keep holding them forever
-// (sync() would eventually retire them too, but only on its next call,
-// which may never come once the grid is inactive).
+// Drops every cached fetcher (download/decode state) — not the texture
+// pool, which stays populated. Call when leaving ModeGames or when grid
+// view is toggled off, so a screen that's no longer shown doesn't keep its
+// download state around forever (sync() would eventually evict it too, but
+// only on its next call, which may never come once the grid is inactive).
 void pkgi_grid_deactivate()
 {
-    g_image_cache.retire_all();
-}
-
-// Call every frame, regardless of whether the grid is the active renderer:
-// ages the retirement queue and destroys (frees the vita2d texture of)
-// whatever has cooled down long enough — see GridImageCache's class
-// comment for why destruction is delayed instead of immediate.
-void pkgi_grid_tick()
-{
-    ++g_grid_frame;
-    g_image_cache.tick(g_grid_frame);
+    g_image_cache.clear();
 }

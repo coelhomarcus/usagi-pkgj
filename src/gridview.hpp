@@ -41,17 +41,11 @@ GridResult pkgi_do_main_grid(
         int avail_height,
         Mode mode);
 
-// Retires every cached cover texture — actual destruction happens later,
-// gradually, via pkgi_grid_tick (see GridImageCache's class comment in
-// gridview.cpp for why: freeing a vita2d texture too soon after its last
-// use has been observed to crash Vita3K). Call when leaving ModeGames or
-// when grid view is toggled off, so a screen that's no longer shown
-// doesn't keep holding its textures forever (sync() would eventually
-// retire them too, but only on its next call, which may never come once
-// the grid is inactive).
+// Drops every cached cover fetcher (download/decode-in-progress state) —
+// not the texture pool (GridTexturePool), which stays populated so
+// scrolling back to an already-shown title displays instantly. Call when
+// leaving ModeGames or when grid view is toggled off, so a screen that's no
+// longer shown doesn't keep its download state around forever (sync()
+// would eventually evict it too, but only on its next call, which may
+// never come once the grid is inactive).
 void pkgi_grid_deactivate();
-
-// Call every frame, regardless of whether the grid is the active renderer:
-// ages the retirement queue and destroys whatever has cooled down long
-// enough, a little at a time.
-void pkgi_grid_tick();

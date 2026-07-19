@@ -76,6 +76,7 @@ add_executable(pkgj
   src/browserview.cpp
   src/gameview.cpp
   src/gridview.cpp
+  src/gridtexturepool.cpp
   src/coverplaceholder.cpp
   src/regionflag.cpp
   src/logbuffer.cpp

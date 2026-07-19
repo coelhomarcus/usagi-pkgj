@@ -1702,18 +1702,12 @@ int main()
 
             pkgi_draw_texture(background, 0, 0);
 
-            // Grid view caches cover textures per visible cell; release them
-            // as soon as it stops being the active renderer (mode switch,
-            // toggling grid off, leaving StateMain via cancel) instead of
-            // waiting for a sync() call that may never come for an inactive
-            // screen. This MUST run before this frame renders anything: it
-            // reflects the state decided at the END of the previous frame,
-            // so any textures it frees were already fully submitted to the
-            // GPU by that frame's pkgi_swap() and are safe to release. Doing
-            // this check AFTER the switch instead (i.e. same frame the grid
-            // last rendered) frees a texture that frame's own ImGui draw
-            // list still references but hasn't submitted yet — a
-            // use-after-free that crashes on cancel out of the grid.
+            // Grid view caches a per-visible-cell download/decode state
+            // (not the displayed textures — see GridTexturePool); drop it
+            // as soon as the grid stops being the active renderer (mode
+            // switch, toggling grid off, leaving StateMain via cancel)
+            // instead of waiting for a sync() call that may never come for
+            // an inactive screen.
             {
                 const bool grid_active_now = state == StateMain &&
                         config.grid_view && pkgi_grid_supported_mode(mode);
@@ -1721,7 +1715,6 @@ int main()
                     pkgi_grid_deactivate();
                 grid_active_last_frame = grid_active_now;
             }
-            pkgi_grid_tick();
 
             // Browse view renders its own header/footer; skip pkgi_do_head()
             // in that state to avoid a conflicting title bar.

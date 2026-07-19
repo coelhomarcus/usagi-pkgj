@@ -26,6 +26,7 @@ static vita2d_texture* sim_load_image_file(const char* path)
 #endif
 
 #include <chrono>
+#include <cstring>
 #include <fmt/format.h>
 
 namespace
@@ -127,6 +128,141 @@ vita2d_texture* decode_png_from_memory(const std::vector<uint8_t>& data)
     return reinterpret_cast<vita2d_texture*>(t);
 #endif
 }
+
+// Shared by get_texture() and take_decoded_cover(): the cache file's
+// extension (set when _build_sources() picked the source) says which
+// decoder to use.
+vita2d_texture* decode_cover_from_path(const std::string& path)
+{
+    const bool is_png = path.size() >= 4 &&
+            path.compare(path.size() - 4, 4, ".png") == 0;
+    if (is_png)
+    {
+        try
+        {
+            return decode_png_from_memory(pkgi_load(path));
+        }
+        catch (const std::exception& e)
+        {
+            LOGFW("[ImageFetcher] failed to read {}: {}", path, e.what());
+            return nullptr;
+        }
+    }
+    return vita2d_load_JPEG_file(path.c_str());
+}
+
+#ifndef PKGI_SIMULATOR
+// Copies a just-decoded, never-drawn vita2d_texture's pixels into a plain
+// packed RGBA8 buffer (see DecodedCover). vita2d's PNG/JPEG loaders only
+// ever produce one of three pixel layouts, classified here the same way
+// vita2d itself does internally (mask against the base-format bits) rather
+// than an exhaustive format switch, since that's all that determines
+// bytes-per-pixel and channel layout:
+//
+//   SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8U8 — PNG path (tagged A8B8G8R8).
+//     Memory order is actually R,G,B,A: vita2d_image_png.c decodes with
+//     png_set_filler(..., PNG_FILLER_AFTER), and libpng's documented
+//     behavior for that is to write R,G,B then append the alpha byte
+//     after — confirmed by reading that source directly, not inferred
+//     from the format tag's name.
+//   SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8 — color JPEG path (tagged
+//     U8U8U8_BGR). vita2d never overrides libjpeg's out_color_space after
+//     jpeg_read_header(), whose default for a non-grayscale JPEG is
+//     JCS_RGB — so memory order is R,G,B despite the "BGR" tag (SCE
+//     format names read right-to-left for memory order, consistent with
+//     the confirmed PNG case above: tag "A8B8G8R8" reversed is R8G8B8A8).
+//     No alpha channel; synthesized as opaque.
+//   default (SCE_GXM_TEXTURE_BASE_FORMAT_U8, grayscale JPEG's U8_R111) —
+//     one byte of luminance per pixel, replicated to R,G,B, opaque alpha.
+DecodedCover extract_decoded_cover(vita2d_texture* tex)
+{
+    DecodedCover cover;
+
+    const unsigned int w      = vita2d_texture_get_width(tex);
+    const unsigned int h      = vita2d_texture_get_height(tex);
+    const unsigned int stride = vita2d_texture_get_stride(tex);
+    const uint8_t* src = static_cast<const uint8_t*>(vita2d_texture_get_datap(tex));
+    if (w == 0 || h == 0 || !src)
+        return cover; // width == 0 signals failure to the caller
+
+    cover.width  = w;
+    cover.height = h;
+    cover.pixels.resize(static_cast<size_t>(w) * h * 4);
+
+    const uint32_t base = vita2d_texture_get_format(tex) & 0x9f000000u;
+    for (unsigned int y = 0; y < h; ++y)
+    {
+        const uint8_t* srow = src + static_cast<size_t>(y) * stride;
+        uint8_t* drow = cover.pixels.data() + static_cast<size_t>(y) * w * 4;
+
+        switch (base)
+        {
+        case SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8U8:
+            memcpy(drow, srow, static_cast<size_t>(w) * 4);
+            break;
+        case SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8:
+            for (unsigned int x = 0; x < w; ++x)
+            {
+                drow[x * 4 + 0] = srow[x * 3 + 0];
+                drow[x * 4 + 1] = srow[x * 3 + 1];
+                drow[x * 4 + 2] = srow[x * 3 + 2];
+                drow[x * 4 + 3] = 255;
+            }
+            break;
+        default:
+            for (unsigned int x = 0; x < w; ++x)
+            {
+                const uint8_t g   = srow[x];
+                drow[x * 4 + 0] = g;
+                drow[x * 4 + 1] = g;
+                drow[x * 4 + 2] = g;
+                drow[x * 4 + 3] = 255;
+            }
+            break;
+        }
+    }
+    return cover;
+}
+#else
+// Decodes straight into an SDL_Surface — unlike get_texture()'s path via
+// decode_png_from_memory()/vita2d_load_JPEG_file(), this never becomes an
+// SDL_Texture at all, so there's no GPU-side handle to free (those helpers
+// produce SDL_TEXTUREACCESS_STATIC textures, which SDL doesn't allow
+// locking/reading back from anyway). SDL_image auto-detects PNG vs JPEG
+// from the file's content, so no extension check is needed here.
+DecodedCover decode_cover_surface(const std::string& path)
+{
+    DecodedCover cover;
+
+    SDL_Surface* raw = IMG_Load(path.c_str());
+    if (!raw)
+        return cover;
+
+    SDL_Surface* conv = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGBA32, 0);
+    SDL_FreeSurface(raw);
+    if (!conv)
+        return cover;
+
+    cover.width  = static_cast<uint32_t>(conv->w);
+    cover.height = static_cast<uint32_t>(conv->h);
+    cover.pixels.resize(static_cast<size_t>(conv->w) * conv->h * 4);
+
+    SDL_LockSurface(conv);
+    for (int y = 0; y < conv->h; ++y)
+    {
+        const uint8_t* srow =
+                static_cast<const uint8_t*>(conv->pixels) +
+                static_cast<size_t>(y) * conv->pitch;
+        uint8_t* drow =
+                cover.pixels.data() + static_cast<size_t>(y) * conv->w * 4;
+        memcpy(drow, srow, static_cast<size_t>(conv->w) * 4);
+    }
+    SDL_UnlockSurface(conv);
+    SDL_FreeSurface(conv);
+
+    return cover;
+}
+#endif
 }
 
 std::vector<ImageFetcher::Source> ImageFetcher::_build_sources(
@@ -362,7 +498,7 @@ ImageFetcher::Status ImageFetcher::get_status()
 }
 
 // ── get_texture ──────────────────────────────────────────────────────────────
-vita2d_texture* ImageFetcher::get_texture(bool allow_upload)
+vita2d_texture* ImageFetcher::get_texture()
 {
     // Process any pending worker result first.
     get_status();
@@ -370,36 +506,12 @@ vita2d_texture* ImageFetcher::get_texture(bool allow_upload)
     if (!_upload_pending)
         return _texture;
 
-    // A cover is ready to decode, but the caller is rate-limiting texture
-    // creation this frame — leave it pending and try again next frame.
-    if (!allow_upload)
-        return _texture; // still nullptr
-
     // Consume the pending path and create the vita2d texture.
     // vita2d_load_*_file must run on the main (render) thread.
     _upload_pending = false;
     const std::string path = std::move(_pending_image_path);
 
-    const bool is_png = path.size() >= 4 &&
-            path.compare(path.size() - 4, 4, ".png") == 0;
-
-    vita2d_texture* tex = nullptr;
-    if (is_png)
-    {
-        try
-        {
-            tex = decode_png_from_memory(pkgi_load(path));
-        }
-        catch (const std::exception& e)
-        {
-            LOGFW("[ImageFetcher] failed to read {}: {}", path, e.what());
-        }
-    }
-    else
-    {
-        tex = vita2d_load_JPEG_file(path.c_str());
-    }
-
+    vita2d_texture* tex = decode_cover_from_path(path);
     if (!tex)
     {
         // Corrupt or unreadable cache file — delete it so the next open
@@ -411,4 +523,47 @@ vita2d_texture* ImageFetcher::get_texture(bool allow_upload)
     _texture = tex;
     _status  = tex ? Status::Ready : Status::Error;
     return tex;
+}
+
+// ── take_decoded_cover ──────────────────────────────────────────────────────
+std::optional<DecodedCover> ImageFetcher::take_decoded_cover()
+{
+    get_status();
+
+    if (_cover_taken || !_upload_pending)
+        return std::nullopt;
+
+    _upload_pending = false;
+    _cover_taken    = true;
+    const std::string path = std::move(_pending_image_path);
+
+#ifndef PKGI_SIMULATOR
+    vita2d_texture* tmp = decode_cover_from_path(path);
+    if (!tmp)
+    {
+        LOGFW("[ImageFetcher] failed to decode {}, removing", path);
+        pkgi_rm(path.c_str());
+        _status = Status::Error;
+        return std::nullopt;
+    }
+
+    // tmp was never drawn, so unlike a texture that's been shown on screen
+    // and then evicted, freeing it right away is safe regardless of Vita3K's
+    // queued-GPU-command timing — see this method's doc comment.
+    DecodedCover cover = extract_decoded_cover(tmp);
+    vita2d_free_texture(tmp);
+#else
+    DecodedCover cover = decode_cover_surface(path);
+#endif
+
+    if (cover.width == 0 || cover.height == 0)
+    {
+        LOGFW("[ImageFetcher] failed to decode {}, removing", path);
+        pkgi_rm(path.c_str());
+        _status = Status::Error;
+        return std::nullopt;
+    }
+
+    _status = Status::Ready;
+    return cover;
 }

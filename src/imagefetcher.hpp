@@ -13,6 +13,7 @@ struct vita2d_texture;
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,17 @@ struct ImageFetchResult
     bool              error{false}; // written before ready = true
     std::string       path;         // written before ready = true (extension
                                      // tells get_texture() which decoder to use)
+};
+
+// Plain CPU-side pixel data for a decoded cover: tightly packed RGBA8
+// (4 bytes/pixel, row-major, R,G,B,A byte order, stride == width*4). Used
+// only by ImageFetcher::take_decoded_cover() — see its comment for why the
+// grid needs this instead of a lasting vita2d_texture.
+struct DecodedCover
+{
+    std::vector<uint8_t> pixels;
+    uint32_t width = 0;
+    uint32_t height = 0;
 };
 
 // Fetches a game's cover image, trying an ordered list of sources and
@@ -54,22 +66,32 @@ public:
 
     // Must be called from the MAIN thread every frame.
     // Retries submission to the global WorkerPool while every slot is busy.
-    //
-    // allow_upload gates the (potentially expensive, GPU-uploading) texture
-    // creation from a downloaded/cached file: when false, a ready-to-decode
-    // cover is left pending and get_texture() returns nullptr this frame, so
-    // the caller can rate-limit how many textures are created per frame
-    // (decoding + uploading many at once floods the GPU command queue, which
-    // both hitches and — on Vita3K — widens the window for a texture to be
-    // freed while an upload command still references it). No effect once the
-    // texture already exists.
-    vita2d_texture* get_texture(bool allow_upload = true);
+    // Used by GameView only — the grid uses take_decoded_cover() instead
+    // (see its comment for why).
+    vita2d_texture* get_texture();
     Status          get_status();
 
-    // The already-created texture, or nullptr if none has been built yet.
-    // Pure accessor: unlike get_texture() it never decodes/uploads, so a
-    // caller can cheaply tell whether a get_texture() call would create one.
-    vita2d_texture* raw_texture() const { return _texture; }
+    // Grid-only alternative to get_texture(): decodes into a plain pixel
+    // buffer (see DecodedCover) instead of a lasting vita2d_texture, for the
+    // caller to copy into its own persistent texture-pool slot
+    // (GridTexturePool, src/gridtexturepool.hpp).
+    //
+    // The decode still goes through a short-lived vita2d_texture (same
+    // decoder get_texture() uses), but that texture is never drawn — its
+    // pixels are copied out and it's freed immediately, all before this call
+    // returns. Vita3K only syncs/uploads a texture's backing memory to the
+    // GPU when the texture is actually bound for a draw call, so a texture
+    // that's never drawn is never at risk of being freed while a queued GPU
+    // command still references it — which is what made the grid's old
+    // approach (one lasting texture per visible cover, evicted and freed on
+    // scroll) crash under Vita3K's async Vulkan emulation. The caller
+    // decides how many of these to request per frame; skip the call entirely
+    // to rate-limit rather than passing a flag in.
+    //
+    // Returns std::nullopt if not ready yet (still downloading), on decode
+    // failure, or if already taken — each ImageFetcher only ever yields one
+    // cover, once.
+    std::optional<DecodedCover> take_decoded_cover();
 
 private:
     struct Source
@@ -84,6 +106,7 @@ private:
 
     bool   _submitted{false};       // true once the slot accepted the task
     bool   _disk_checked{false};    // true once the on-disk cache check ran
+    bool   _cover_taken{false};     // true once take_decoded_cover() consumed it
     Status _status{Status::Pending};
 
     // Slow-path result from the worker (released once processed).

@@ -40,9 +40,11 @@ Implemented in `ImageFetcher` (`src/imagefetcher.{hpp,cpp}`), shared by GameView
 
 Downloads run through a small global `WorkerPool` (`src/workerpool.hpp`, 3 slots) — up to 3 covers download concurrently, on-device or in the simulator — and are cached to disk (`thumbnail_folder`, default `ux0:usagi-pkgj/cover`) so a title's cover is only ever fetched once. The pool de-duplicates by task_id across all slots, since the same cover can be wanted by two independent `ImageFetcher`s at once (e.g. the grid and GameView, for a title visible in both).
 
-### Pagination / memory
+### Cover texture pool
 
-The grid only ever keeps `ImageFetcher` instances (and therefore GPU textures) for the currently visible page (`GridImageCache` in `src/gridview.cpp`) — as you scroll, cells that leave the visible window are evicted and their textures freed. This is the "pagination" that keeps VRAM usage bounded regardless of how large the games list is.
+The grid's cover art is backed by a fixed pool of 24 persistent texture slots (`GridTexturePool`, `src/gridtexturepool.{hpp,cpp}`, 256x320 each, ~7.5MB total) that are allocated lazily and never individually freed during the session. A cover is displayed by decoding it into a plain pixel buffer (`ImageFetcher::take_decoded_cover()`) and copying those pixels into a slot's existing texture — the texture object and its GPU memory never change, only the content does, reused LRU once all 24 slots are in use.
+
+This exists because giving each visible cell its own texture (created on scroll-in, freed on scroll-out) crashed Vita3K: its Vulkan backend syncs a texture's memory to the GPU lazily, on an async render thread, so a texture freed shortly after being drawn could still have a queued-but-unexecuted upload command pointing at memory that's already gone. Never freeing the *displayed* textures at all removes that failure mode structurally instead of trying to time around it. `GridImageCache` (`src/gridview.cpp`) still keeps a per-visible-cell `ImageFetcher` for download/decode coordination, evicted immediately (no cooldown needed) as cells scroll off-screen — it never owns a lasting texture, so its lifetime is unrelated to the pool's.
 
 ### Placeholder art
 
@@ -293,8 +295,9 @@ Non-exhaustive list of what differs from [blastrock/pkgj](https://github.com/bla
 
 | Area | Files | Description |
 |------|-------|-------------|
-| Grid view | `src/gridview.{hpp,cpp}` (new) | Cover-art grid rendering, input, and per-visible-cell texture cache (`GridImageCache`) for `ModeGames`/`ModePspGames`/`ModePsxGames`, default-on |
-| Cover fetching | `src/imagefetcher.{hpp,cpp}` | Reworked to try an ordered list of sources per title (HexFlow PNG → PS Store JPEG fallback) instead of a single URL, mode-aware HexFlow folder (PSVita/PSP/PS1); PNG decode goes through `vita2d_load_PNG_buffer` |
+| Grid view | `src/gridview.{hpp,cpp}` (new) | Cover-art grid rendering, input, and per-visible-cell download/decode coordination (`GridImageCache`) for `ModeGames`/`ModePspGames`/`ModePsxGames`, default-on |
+| Cover texture pool | `src/gridtexturepool.{hpp,cpp}` (new) | Fixed pool of 24 persistent, never-individually-freed texture slots the grid blits decoded covers into — see "Cover texture pool" above |
+| Cover fetching | `src/imagefetcher.{hpp,cpp}` | Reworked to try an ordered list of sources per title (HexFlow PNG → PS Store JPEG fallback) instead of a single URL, mode-aware HexFlow folder (PSVita/PSP/PS1); PNG decode goes through `vita2d_load_PNG_buffer`. `take_decoded_cover()` decodes to a plain pixel buffer for the texture pool; `get_texture()` (GameView only) is unchanged |
 | Cover/flag assets | `assets/covers/*.png`, `assets/flags/*.png` | Grid/GameView placeholder art per content type (Vita/PSP vertical, PSX square) and region flag badges, embedded like other bundled UI assets |
 | Config | `src/config.{hpp,cpp}` | Added `grid_view` |
 | Menu | `src/menu.{hpp,cpp}` | Added "Grid view (games)" toggle |
