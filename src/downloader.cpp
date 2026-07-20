@@ -136,8 +136,13 @@ void Downloader::run()
         }
         catch (const std::exception& e)
         {
-            LOG_ERR("Download failed: %s", e.what());
-            error(e.what());
+            if (_cancel_current || _dying)
+                LOG("Download canceled: %s", item.name.c_str());
+            else
+            {
+                LOG_ERR("Download failed: %s", e.what());
+                error(e.what());
+            }
         }
     }
 }
