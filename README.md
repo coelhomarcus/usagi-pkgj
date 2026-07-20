@@ -117,6 +117,12 @@ Pushing a tag in the form `0.72` runs the release workflow, builds the Vita and 
 
 Tags containing `alpha`, `beta`, or `rc` are published as pre-releases.
 
+# AI-assisted development
+
+AI-assisted tools were used during the development of Usagi PKGj to help with code suggestions, debugging, refactoring, research, and documentation. 
+
+All generated suggestions and changes were reviewed, adapted, and tested by the project maintainer.
+
 # License
 
 This software is released under the 2-clause BSD license.
@@ -137,5 +143,3 @@ puff.h and puff.c files are under [zlib][] license.
 [img_downloads]: https://img.shields.io/github/downloads/coelhomarcus/usagi-pkgj/total.svg?maxAge=3600
 [img_latest]: https://img.shields.io/github/release/coelhomarcus/usagi-pkgj.svg?maxAge=3600
 [img_license]: https://img.shields.io/github/license/coelhomarcus/usagi-pkgj.svg?maxAge=2592000
-
-:)
