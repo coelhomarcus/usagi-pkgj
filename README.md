@@ -4,12 +4,12 @@
 
 Usagi PKGj is a fork of [blastrock/pkgj][pkgj_upstream] — the homebrew that lets you download & unpack PKG files directly on Vita together with your [NoNpDrm][] or [NoPsmDrm][] fake license. PSP content can be played using [Adrenaline][] or directly from LiveArea using [NoPspEmuDrm][].
 
-This fork's main addition is a **cover-art grid view** for browsing your PS Vita games — see below.
+This fork's main addition is a **cover-art grid view** for browsing PS Vita, PSP, and PSX games — see below.
 
 # Features
 
 * **works on** all PS Vita models, including PSTV.
-* **cover-art grid view** for the PS Vita games list — see [Cover art](#cover-art) below.
+* **cover-art grid view** for PS Vita, PSP, and PSX games — see [Cover art](#cover-art) below.
 * **easy** way to see list of available downloads, including searching, filter & sorting.
 * **standalone**, no PC required, everything happens directly on Vita.
 * **automatic** download and unpack, just choose an item, and it will be installed, including bubble in live area.
@@ -17,6 +17,27 @@ This fork's main addition is a **cover-art grid view** for browsing your PS Vita
 * **queues** multiple downloads.
 * **supports** the TSV file format.
 * **installs** Game Updates, DLCs, Demos, Themes, PSM, PSP games, PSP DLCs, and PSX games.
+
+# Screenshots
+
+<table>
+  <tr>
+    <td align="center"><strong>Browse Home</strong><br><img src="docs/screenshots/01-Home.png" alt="Browse Home" width="420"></td>
+    <td align="center"><strong>PS Vita Grid</strong><br><img src="docs/screenshots/02-PSV-Grid.png" alt="PS Vita game grid" width="420"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Grid Filters</strong><br><img src="docs/screenshots/03-PSV-Grid-wFilter.png" alt="PS Vita grid filters" width="420"></td>
+    <td align="center"><strong>PS Vita Details</strong><br><img src="docs/screenshots/04-PSV-Details.png" alt="PS Vita details page" width="420"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>PlayStation Portable Grid</strong><br><img src="docs/screenshots/05-PSP-Grid.png" alt="PlayStation Portable game grid" width="420"></td>
+    <td align="center"><strong>PlayStation Portable Install</strong><br><img src="docs/screenshots/06-PSP-Details%26Install.png" alt="PlayStation Portable install actions" width="420"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>PlayStation 1 Grid</strong><br><img src="docs/screenshots/07-PS1-Grid.png" alt="PlayStation 1 game grid" width="420"></td>
+    <td align="center"><strong>PlayStation 1 Details</strong><br><img src="docs/screenshots/08-PS1-Details.png" alt="PlayStation 1 details page" width="420"></td>
+  </tr>
+</table>
 
 # Download
 
@@ -26,10 +47,9 @@ Get latest version as [vpk file here][pkgj_latest].
 
 Make sure unsafe mode is enabled in Henkaku settings.
 
-Using application is pretty straight forward. Select item you want to install and press X and follow the instructions. To sort/filter/search press triangle.
-It will open context menu. Press triangle again to confirm choice(s) you make in menu. Or press O to cancel any changes you did.
+Use the Home screen to choose a content section, then select an item to open its details page. The footer always shows the available PlayStation button actions for the current screen.
 
-Press left or right button to move page up or down.
+For general PKGj usage, TSV sources, search/filter behavior, and base download flow details, see the [upstream PKGj repository][pkgj_upstream].
 
 ## Cover art
 
@@ -42,89 +62,60 @@ Covers are fetched on demand, one at a time, and cached locally so they only nee
 
 # Configuration
 
-Usagi PKGj is shipped with valid default URLs. If you wish to change some settings, they can be configured through `ux0:usagi-pkgj/config.txt` or `ur0:usagi-pkgj/config.txt`.
+Usagi PKGj is shipped with valid default URLs. Settings can be configured through `ux0:usagi-pkgj/config.txt` or `ur0:usagi-pkgj/config.txt`.
+
+For inherited PKGj options such as `url_games`, `url_dlcs`, `url_psp_games`, and `no_version_check`, see the [upstream PKGj repository][pkgj_upstream].
 
 | Option | Description |
 | --- | --- |
-| `url_games <URL>` | The URL of the PS Vita game list |
-| `url_psv_demos <URL>` | The URL of the PS Vita demo list |
-| `url_dlcs <URL>` | The URL of the PS Vita DLC list |
-| `url_psv_themes <URL>` | The URL of the PS Vita Theme list |
-| `url_psm_games <URL>` | The URL of the PS Mobile list (see Q&A) |
-| `url_psp_games <URL>` | The URL of the PSP game list |
-| `url_psp_dlcs <URL>` | The URL of the PSP DLC list |
-| `url_psx_games <URL>` | The URL of the PSX game list |
-| `url_comppack <URL>` | The URL of the PS Vita compatibility pack list |
-| `install_psp_as_pbp 1` | Install PSP games as EBOOT.EBP files instead of ISO files (see Q&A) |
-| `install_psp_psx_location uma0:` | Install PSP and PSX games on `uma0:` |
-| `no_version_check 1` | Do not check for update when starting Usagi PKGj |
 | `grid_view 0` | Show the games list as a plain text list instead of the cover-art grid (grid is the default) |
 | `thumbnail_folder <path>` | Local folder covers are cached in (default: `ux0:usagi-pkgj/cover`) |
+| `install_psp_as_pbp 1` | Install PSP games as EBOOT.EBP files instead of ISO files (see Troubleshooting) |
+| `install_psp_psx_location uma0:` | Install PSP and PSX games on `uma0:` |
 
-# Q&A
+# Troubleshooting
 
-1. Where to remove interrupted/failed downloads to free up the space(Only PSV Updates/PSX/PSP games)?
+For general PKGj usage questions, see the [upstream PKGj repository][pkgj_upstream].
 
-    In case of PSV content: Simply remove queued download in your livearea. If that doesn't work for any reason, you can always delete folder within `ux0:bgdl/t/` - each download will be in separate folder by the order in which they were queued.
+## Interrupted downloads
 
-    For everything else: `ux0:usagi-pkgj` folder - each download will be in separate folder by its title id. Simply delete the folder & resume file.
+For PS Vita content, remove the queued download from LiveArea. If that does not work, delete the matching folder under `ux0:bgdl/t/`.
 
-2. Download speed is too slow!
+For PSP, PSX, and other direct downloads, delete the matching title folder under `ux0:usagi-pkgj`.
 
-    Typically you should see speeds ~1-2 MB/s. This is normal for Vita hardware. Of course it also depends on WiFi router you have and WiFi signal strength. But sometimes speed will drop down to only few hundred KB/s. This happens for pkg files that contains many small files or many folders. Creating a new file or a new folder takes extra time which slows down the download.
-3. Cant background download for PSP games and dont appear on LiveArea
-    
-    To background download PSP Games, and to launch directly from livearea outside Adrenaline
-    you will need the [NoPspEmuDrm][] plugin.
-    
-    also doing this will make them download as EBOOT files instead of ISO files.
-4. I want to install PSP games as EBOOT file.
+## PSP LiveArea installs
 
-    Installing PSP games as EBOOT files is possible. It allows to install games faster and make them take less space. However, you will need to install the [npdrm_free][] plugin to make them work.
+To queue PSP games in LiveArea and launch them outside Adrenaline, install the [NoPspEmuDrm][] plugin. This path installs PSP games as EBOOT/PBP files.
 
-    To install PSP games as EBOOT files, just add the following line to your config:
-    ```
-    install_psp_as_pbp 1
-    ```
+Without that plugin, PSP games are downloaded directly by Usagi PKGj and installed as ISO files for Adrenaline.
 
-    If you want to switch back to the other mode, simply remove the line. Writing 0 is not sufficient.
+## PSP EBOOT/PBP installs
 
-5. I can't play PSP games, it says "The game could not be started (80010087)".
+Installing PSP games as EBOOT/PBP can be faster and use less space, but it requires the [npdrm_free][] plugin.
 
-    You need to install the [npdrm_free][] plugin in VSH, or install games as ISO.
+To prefer EBOOT/PBP installs, add this to your config:
 
-6. The PSM Games don't work.
+```
+install_psp_as_pbp 1
+```
 
-    If you followed the instructions for [NoPsmDrm][], you can try to activate your account for psm games using [NoPsmDrm Fixer](https://github.com/Yoti/psv_npdrmfix).
+To switch back, remove the line from the config file.
 
-7. Can't download Updates or DLCs on my PSTV
+## Cover cache
 
-    This error is caused by AntiBlackList. To fix it, completely undo then uninstall AntiBlackList and install [DolcePolce](https://silica.codes/Li/dolcepolce) plugin instead.
-
-8. How do I use compatibility packs?
-
-    Compatiblity packs are deprecated and disabled by default. It is recommended to use [reF00D](https://github.com/dots-tb/reF00D) or [0syscall6](https://github.com/SKGleba/0syscall6). If you would still like to use compatiblity packs, set `url_comppack` to `https://gitlab.com/nopaystation_repos/nps_compati_packs/raw/master/` in the config file. Firmwares 3.65 or lower require a workaround for TLS. The compatibility pack list has not been updated since Oct 2019.
+Covers are cached under `ux0:usagi-pkgj/cover` by default. Delete that folder if you want Usagi PKGj to fetch cover art again.
 
 # Building
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions (host simulator + Vita `.vpk`), the CI pipeline, and a summary of what this fork changes versus upstream.
 
-You can set environment variable `PSVITAIP` (before running cmake) to IP address of
-Vita, that will allow to use `make send` for sending eboot.bin file directly to `ux0:app/USAG00001` folder.
-
-To enable debugging logging pass `-DPKGI_ENABLE_LOGGING=ON` argument to cmake. Then application will send debug messages to
-UDP multicast address 239.255.0.100:30000. To receive them you can use [socat][] on your PC:
-
-    $ socat udp4-recv:30000,ip-add-membership=239.255.0.100:0.0.0.0 -
+For base PKGj build context, see the [upstream PKGj repository][pkgj_upstream].
 
 # Publishing a release (for maintainers)
 
-Pushing a tag in the form `v0.56` will create a new release and build
-`UsagiPKGJ.vpk`.
+Pushing a tag in the form `0.72` runs the release workflow, builds the Vita and host artifacts, and publishes a GitHub Release.
 
-If you want to build a beta, you can push a tag in the form `v0.56-beta1` which
-will create a pre-release. Such a release will not be picked up by the auto
-update.
+Tags containing `alpha`, `beta`, or `rc` are published as pre-releases.
 
 # License
 
@@ -137,13 +128,6 @@ puff.h and puff.c files are under [zlib][] license.
 [NoPsmDrm]: https://github.com/frangarcj/NoPsmDrm/
 [NoPspEmuDrm]: https://github.com/LiEnby/NoPspEmuDrm
 [Adrenaline]: https://github.com/TheOfficialFloW/Adrenaline
-[zrif_online_converter]: https://rawgit.com/mmozeiko/pkg2zip/online/zrif.html
-[pkg_dec]: https://github.com/weaknespase/PkgDecrypt
-[pkg_releases]: https://github.com/blastrock/pkgj/releases
-[vitasdk]: https://vitasdk.org/
-[libvita2d]: https://github.com/xerpi/libvita2d
-[PSDLE]: https://repod.github.io/psdle/
-[socat]: http://www.dest-unreach.org/socat/
 [zlib]: https://www.zlib.net/zlib_license.html
 [pkgj_upstream]: https://github.com/blastrock/pkgj
 [hexflow_covers]: https://github.com/Andiweli/HexFlow-Covers
