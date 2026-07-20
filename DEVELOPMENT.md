@@ -1,252 +1,208 @@
-# Usagi PKGj — Developer Guide
+# Usagi PKGj - Developer Guide
 
-This document covers: what changed in this fork, how to build, how to test via the CLI simulator, and how to generate the final Vita binary (`.vpk`).
+Usagi PKGj is a fork of [blastrock/pkgj](https://github.com/blastrock/pkgj).
+This document tracks the current fork-specific behavior, build workflow, and
+release process. For base PKGj architecture, TSV setup, and inherited options,
+prefer the upstream repository.
 
----
+Current release version: `0.72`.
 
 ## Table of Contents
 
-1. [What was changed and why](#1-what-was-changed-and-why)
-2. [Feature: cover-art grid view](#2-feature-cover-art-grid-view)
-3. [How to build (CLI / host simulator)](#3-how-to-build-cli--host-simulator)
-4. [Testing with the CLI simulator](#4-testing-with-the-cli-simulator)
-5. [How to generate the Vita binary](#5-how-to-generate-the-vita-binary)
-6. [File change summary](#6-file-change-summary)
+1. [Fork scope](#1-fork-scope)
+2. [Browse, grid, and cover pipeline](#2-browse-grid-and-cover-pipeline)
+3. [Details and install flows](#3-details-and-install-flows)
+4. [Local builds](#4-local-builds)
+5. [Testing with host tools](#5-testing-with-host-tools)
+6. [Vita install/debug cycle](#6-vita-installdebug-cycle)
+7. [CI and releases](#7-ci-and-releases)
+8. [File change summary](#8-file-change-summary)
 
----
+## 1. Fork scope
 
-## 1. What was changed and why
+The fork is currently centered on a cleaner browse experience, cover-art grid
+navigation, and stability on Vita hardware/Vita3K.
 
-Usagi PKGj is a fork of [blastrock/pkgj](https://github.com/blastrock/pkgj). Its main addition is a **cover-art grid view** for the PS Vita games list: an alternative to the plain-text list, showing each game's box art in a scrollable grid. Covers are fetched on demand and cached locally, with an optional one-time bulk sync for players who'd rather not see them pop in while scrolling.
+Notable differences from upstream:
 
-This fork also removes a few features that existed on top of upstream at various points (personal annotations/flags, per-title comments, in-game screenshots, the GameView PS Store description panel) to keep the game detail screen focused and its focus/navigation model simpler — GameView now goes straight to "Install Game" instead of requiring a left/right panel pick first.
+- Rebranded app: `Usagi PKGj`, title ID `USAG00001`, VPK name
+  `UsagiPKGJ.vpk`.
+- Isolated data/config folder: `ux0:usagi-pkgj` or `ur0:usagi-pkgj`.
+- Home screen groups content into clearer PlayStation sections.
+- Grid view is enabled by default for PS Vita, PlayStation Portable, and
+  PlayStation 1 game lists.
+- Covers are fetched on demand and cached locally; the removed one-time bulk
+  cover sync is no longer part of the app.
+- Region flag badges are rendered with bundled flag art.
+- Footer hints render PlayStation button glyphs with button colors.
+- Details pages expose direct actions in the footer instead of requiring focus
+  movement to an install button.
+- PSP direct downloads can be cancelled from the in-app progress view.
+- PSP LiveArea PBP queueing is available when the `NoPspEmuDrm_kern` plugin is
+  present.
+- LiveArea queueing shows feedback before the synchronous BGDL call begins, so
+  the Vita does not look frozen after pressing install.
+- Stability work includes a persistent grid texture pool, held-navigation cover
+  throttling, serialized curl transfers, and OpenSSL 1.0.x locking callbacks.
 
----
+## 2. Browse, grid, and cover pipeline
 
-## 2. Feature: cover-art grid view
+### Supported grid modes
 
-### What it does
+The grid renderer lives in `src/gridview.{hpp,cpp}` and is enabled only for:
 
-- Toggle **"Grid view (games)"** in the triangle options menu to switch the PS Vita games list between the classic text list and a cover-art grid (4 columns × 2 rows per page).
-- Selecting a cell and pressing X opens the same GameView detail screen the list uses.
-- Triangle still opens the options menu from the grid; L1/R1 still jump alphabetically by name group, same as the list.
+- `ModeGames` - PS Vita games
+- `ModePspGames` - PlayStation Portable games
+- `ModePsxGames` - PlayStation 1 games
 
-### Where covers come from
+Other modes keep the classic text list. The menu option is still named
+`Grid view (games)` and is controlled by `config.grid_view` (default: on).
 
-Implemented in `ImageFetcher` (`src/imagefetcher.{hpp,cpp}`), shared by GameView (single cover) and the grid (one fetcher per visible cell). For each title it tries an ordered list of sources, falling back on a 404/failure:
+### Cover sources and cache
 
-1. **[HexFlow-Covers](https://github.com/Andiweli/HexFlow-Covers)** — vertical PS Vita box art (PNG), the default source.
-2. **PlayStation Store** — JPEG cover, used as a fallback for titles HexFlow doesn't have.
+`ImageFetcher` (`src/imagefetcher.{hpp,cpp}`) builds an ordered source list per
+title:
 
-Downloads run through a small global `WorkerPool` (`src/workerpool.hpp`, 3 slots) — up to 3 covers download concurrently, on-device or in the simulator — and are cached to disk (`thumbnail_folder`, default `ux0:usagi-pkgj/cover`) so a title's cover is only ever fetched once. The pool de-duplicates by task_id across all slots, since the same cover can be wanted by two independent `ImageFetcher`s at once (e.g. the grid and GameView, for a title visible in both).
+1. HexFlow-Covers PNG art, using this fork's mirror:
+   `https://raw.githubusercontent.com/coelhomarcus/HexFlow-Covers/main/Covers/...`
+2. PlayStation Store JPEG cover as a fallback.
 
-### Cover texture pool
+The HexFlow folder is mode-aware:
 
-The grid's cover art is backed by a fixed pool of 24 persistent texture slots (`GridTexturePool`, `src/gridtexturepool.{hpp,cpp}`, 256x320 each, ~7.5MB total) that are allocated lazily and never individually freed during the session. A cover is displayed by decoding it into a plain pixel buffer (`ImageFetcher::take_decoded_cover()`) and copying those pixels into a slot's existing texture — the texture object and its GPU memory never change, only the content does, reused LRU once all 24 slots are in use.
+- `PSVita` for PS Vita games
+- `PSP` for PlayStation Portable games
+- `PS1` for PlayStation 1 games
 
-This exists because giving each visible cell its own texture (created on scroll-in, freed on scroll-out) crashed Vita3K: its Vulkan backend syncs a texture's memory to the GPU lazily, on an async render thread, so a texture freed shortly after being drawn could still have a queued-but-unexecuted upload command pointing at memory that's already gone. Never freeing the *displayed* textures at all removes that failure mode structurally instead of trying to time around it. `GridImageCache` (`src/gridview.cpp`) still keeps a per-visible-cell `ImageFetcher` for download/decode coordination, evicted immediately (no cooldown needed) as cells scroll off-screen — it never owns a lasting texture, so its lifetime is unrelated to the pool's.
+Covers are cached in `thumbnail_folder`; when unset, the default is
+`ux0:usagi-pkgj/cover`.
 
-### Placeholder art
+### Worker and curl limits
 
-Cells without a cached cover yet show `assets/covers/loading.png` (while fetching) or `assets/covers/noimage.png` (fetch failed / no source has this title) instead of a plain colored box. Embedded into the `.vpk` the same way as every other bundled Vita UI asset (see `cross.cmake`'s `add_assets`); the host simulator has no such embedding step and falls back to a plain rect+text placeholder there.
+Cover fetching uses `WorkerPool::image_workers()`, currently limited to one
+slot. In addition, `CurlHttp::start()` serializes every curl/OpenSSL transfer
+process-wide.
 
----
+That is deliberate. VitaSDK ships OpenSSL 1.0.x, and concurrent TLS work was a
+major source of Vita3K crashes while cover downloads were being stressed. The
+current design favors predictable stability over theoretical parallel cover
+download speed.
 
-## 3. How to build (CLI / host simulator)
+### Texture lifetime
 
-### Prerequisites
+The grid does not let each visible cell own and free its own texture. Instead,
+it uses `GridTexturePool` (`src/gridtexturepool.{hpp,cpp}`), a fixed pool of 24
+persistent texture slots sized `256x320`.
 
-- Linux (Debian/Ubuntu recommended)
-- `gcc-12` and `g++-12`
-- Python 3.6+ with [Poetry](https://python-poetry.org/)
-- Internet access (Conan downloads dependencies on first build)
+`ImageFetcher::take_decoded_cover()` decodes into CPU-side RGBA pixels, and the
+grid copies those pixels into a reusable texture-pool slot. Texture objects stay
+alive for the process lifetime, which avoids Vita3K render-thread uploads
+touching freed texture memory during fast scrolling.
 
-### Steps
+### Scroll throttling
+
+Held Up/Down navigation is throttled inside `src/gridview.cpp`:
+
+- Movement is reduced to one step every 6 frames during a held direction.
+- After 1 second of continuous held navigation, new cover fetch/decode work is
+  paused until the direction is released.
+- Covers already resident in `GridTexturePool` still draw immediately.
+
+This keeps fast scanning responsive without overwhelming the cover pipeline.
+
+### Placeholder and flag assets
+
+Cover placeholders are platform-specific and live in `assets/covers/`:
+
+- `vita_loading.png`, `vita_noimage.png`
+- `psp_loading.png`, `psp_noimage.png`
+- `ps1_loading.png`, `ps1_noimage.png`
+
+Region flags live in `assets/flags/` and are loaded through
+`src/regionflag.{hpp,cpp}`.
+
+## 3. Details and install flows
+
+`GameView` (`src/gameview.{hpp,cpp}`) is now action-oriented:
+
+- Cross installs or cancels the active direct download.
+- Circle closes the details page.
+- Triangle queues PSP LiveArea PBP installs when `NoPspEmuDrm_kern` is present.
+- Footer hints render colored PlayStation glyphs instead of plain `[X]` text.
+
+PS Vita, DLC, themes, and PSM still use the BGDL/LiveArea path. The helper
+`pkgi_queue_livearea_install()` in `src/pkgi.cpp` enqueues work, shows a
+`Queueing ... in LiveArea...` message, waits two frames, then starts the
+synchronous BGDL call. This lets the user see that the install action was
+accepted before the system call blocks.
+
+PSP and PlayStation 1 direct downloads use `Downloader`/`Download` and the
+in-app progress bar. PSP direct downloads now expose cancellation.
+
+## 4. Local builds
+
+The convenience script is the shortest path:
 
 ```bash
-# 1. Enter the ci/ directory
-cd /path/to/pkgj/ci
+./build.sh host
+./build.sh vita
+./build.sh vita-test
+```
 
-# 2. Install Conan via Poetry and configure profiles (first time only)
+Targets:
+
+| Target | Output | Notes |
+| --- | --- | --- |
+| `host` | `ci/buildhost/pkgj_cli`, `ci/buildhost/pkgj_sim` | CLI and SDL simulator |
+| `vita` | `ci/build/UsagiPKGJ.vpk` | Release title ID `USAG00001` |
+| `vita-test` | `ci/buildtest/UsagiPKGJ-Test.vpk` | Side-by-side test title ID `USAG00099` |
+
+Useful options:
+
+```bash
+./build.sh vita --clean
+./build.sh vita --fake-version 0.71
+```
+
+`--fake-version` overrides both the runtime version string and Vita
+`APP_VER`, which is useful for update-flow testing.
+
+### Manual host build
+
+```bash
+cd ci
 ./setup_conan.sh
+mkdir -p buildhost
+cd buildhost
 
-# 3. Install host dependencies
-export CC=gcc-12 CXX=g++-12
-mkdir buildhost
-poetry run conan install .. \
+poetry run conan install ../.. \
   --build missing \
   -s build_type=RelWithDebInfo \
   -s compiler=gcc \
   -s compiler.version=12 \
   -s compiler.libcxx=libstdc++11 \
-  --output-folder buildhost
+  --output-folder .
 
-# 4. Compile
-poetry run conan build .. \
-  -s build_type=RelWithDebInfo \
-  -s compiler=gcc \
-  -s compiler.version=12 \
-  -s compiler.libcxx=libstdc++11 \
-  --output-folder buildhost
+cmake ../.. \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DHOST_BUILD=ON \
+  -DBUILD_SIM=ON \
+  -DCMAKE_TOOLCHAIN_FILE=./conan_toolchain.cmake
+
+ninja pkgj_cli pkgj_sim
 ```
 
-The resulting binary is at `ci/buildhost/pkgj_cli`.
+### Manual Vita build
 
-> **Note:** Steps 3 and 4 also configure and build via CMake internally. After the first build, you can rebuild faster using:
-> ```bash
-> cd ci/buildhost && source conanbuild.sh && cmake --build . --target pkgj_cli
-> ```
->
-> To also build the graphical simulator (`pkgj_sim`, needs `libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl-dev`), add `-DBUILD_SIM=ON` when invoking cmake directly against `ci/buildhost` (see `host.cmake`).
-
----
-
-## 4. Testing with the CLI simulator
-
-The `pkgj_cli` binary uses `simulator.cpp` to replace all Vita-specific syscalls (file I/O, memory, time) with standard POSIX equivalents, allowing the database, download, and extraction logic to be tested on a regular Linux machine.
-
-> **Important:** `FileHttp` in the simulator reads **local files**, not real HTTP URLs. To test with online data, download the file first with `curl` and pass the local path.
-
-### Available subcommands
-
-```
-pkgj_cli refreshlist    <MODE> <tsv_file>
-pkgj_cli filedownload   <local_file_or_url>
-pkgj_cli extractzip     <zip_file>
-pkgj_cli refreshcomppack <local_file>
-pkgj_cli extract        <pkg_file> <zrif> <sha256>
-pkgj_cli patchinfo      <xml_file> <titleid>
-```
-
----
-
-### Test 1 — Parse a real TSV database
-
-Download the community PSVita game list and parse it:
+Local Vita builds require VitaSDK in a compatible x86_64 Linux environment.
+On macOS/Apple Silicon, using GitHub Actions or a Docker/x86_64 Linux setup is
+usually easier than installing the toolchain directly.
 
 ```bash
-cd ci/buildhost
-
-# Download the TSV
-curl -L "https://raw.githubusercontent.com/txy7795679/PSVITA-PKGJ-DATADB/refs/heads/master/PSV_GAMES.tsv" \
-     -o PSV_GAMES.tsv
-
-# Parse and display titles sorted by size
-./pkgj_cli refreshlist PSVGAMES PSV_GAMES.tsv | head -20
-```
-
-Expected output (titles sorted descending by file size):
-```
-The Lost Child (3.61+!) [3.65]: 3537465536
-The Sly Trilogy: 3526375296
-...
-Persona 4: The Golden (PlayStation Vita the Best): 3335541664
-```
-
-> Note: `TitleDatabase::reload()`, used by the app itself (and by the grid/GameView cover lookups), expects the TSV's rows to be CRLF-terminated — matches the format community title databases ship in. LF-only test fixtures will parse as a single row.
-
----
-
-### Test 2 — Extract a zip (compatibility pack simulation)
-
-The `extractzip` command simulates how PKGj extracts compatibility packs on the Vita. It extracts to `./tmp/`.
-
-Create a test zip (Python, since `zip` may not be installed):
-
-```bash
-cd ci/buildhost
-
-python3 - <<'EOF'
-import zipfile
-with zipfile.ZipFile('test_pack.zip', 'w', zipfile.ZIP_DEFLATED) as z:
-    # Directory entries must come before their files (required by extractzip)
-    z.mkdir('sce_sys')
-    z.writestr('sce_sys/param.sfo', b'\x00PSF' + b'fake PARAM.SFO data')
-    z.writestr('eboot.bin', b'fake eboot.bin data')
-    z.writestr('data.bin', b'fake comppack data')
-print("Created test_pack.zip")
-EOF
-
-mkdir -p tmp
-./pkgj_cli extractzip test_pack.zip
-find tmp/ -type f
-```
-
-Expected output:
-```
-tmp/eboot.bin
-tmp/sce_sys/param.sfo
-tmp/data.bin
-```
-
-> **Note:** `extractzip` requires that **directory entries** (names ending in `/`) appear in the zip before the files inside them. When creating zips programmatically, use `z.mkdir()` or add an explicit `ZipInfo` entry for each directory.
-
----
-
-### Test 3 — File download simulation
-
-```bash
-# Simulate downloading a local file (FileHttp reads local paths as if they were URLs)
-./pkgj_cli filedownload PSV_GAMES.tsv
-# Output written to ./tmp/
-```
-
----
-
-## 5. How to generate the Vita binary
-
-### Additional prerequisites
-
-- [VitaSDK](https://vitasdk.org/) installed — see install steps below
-- VitaSDK in PATH: `export VITASDK=~/vitasdk && export PATH=$VITASDK/bin:$PATH`
-
-> VitaSDK's prebuilt packages are x86_64-only. On Apple Silicon / arm64 Linux you'll need x86_64 emulation (Rosetta on macOS, QEMU on Linux) to run the toolchain — the GitHub Actions workflow (`.github/workflows/build.yml`) builds natively on x86_64 and is the easiest way to get a `.vpk` without local emulation.
-
-### Install VitaSDK (if not present)
-
-Without this the Vita build will fail immediately with `arm-vita-eabi-gcc: command not found`.
-
-`bootstrap-vitasdk.sh` installs to the path in `$VITASDK`. If that variable is unset, it defaults to `/usr/local/vitasdk` (requires `sudo`). To install without root, point it somewhere in your home directory first:
-
-```bash
-# Option A — system-wide (requires sudo, installs to /usr/local/vitasdk)
-git clone https://github.com/vitasdk/vdpm /tmp/vdpm
-cd /tmp/vdpm
-sudo ./bootstrap-vitasdk.sh
-
-# Option B — user-local (no sudo, installs to ~/vitasdk)
-export VITASDK=~/vitasdk
-git clone https://github.com/vitasdk/vdpm /tmp/vdpm
-cd /tmp/vdpm
-./bootstrap-vitasdk.sh
-```
-
-After installation, add this to `~/.bashrc` (adjust path if you used Option B):
-
-```bash
-export VITASDK=/usr/local/vitasdk   # or ~/vitasdk for Option B
-export PATH=$VITASDK/bin:$PATH
-```
-
-Verify:
-
-```bash
-arm-vita-eabi-gcc --version
-```
-
-### Build the VPK
-
-> ⚠️ **This will fail without VitaSDK installed.** Do not skip the prerequisite steps above.
-
-```bash
-cd /path/to/pkgj/ci
-
-export CC=gcc-12 CXX=g++-12
-
-# Run setup once if you haven't already (exports conan packages, copies vita profile)
+cd ci
 ./setup_conan.sh
-
-mkdir build && cd build
+mkdir -p build
+cd build
 
 poetry run conan install ../.. \
   --build missing \
@@ -259,48 +215,107 @@ poetry run conan build ../.. \
   --profile:host vita \
   --output-folder .
 
-# Optional: copy the unsigned ELF (includes debug symbols)
 cp pkgj pkgj.elf
 ```
 
-Output files in `ci/build/`:
-| File | Description |
-|------|-------------|
-| `eboot.bin` | Signed SELF — the actual executable loaded by the Vita |
-| `UsagiPKGJ.vpk` | Full installable package (includes `eboot.bin` + Live Area assets) |
-| `pkgj.elf` | Unsigned ELF — useful for debugging with `gdb` or disassembly |
+Vita output files are written to `ci/build/`:
 
-### Install on Vita via FTP
+| File | Description |
+| --- | --- |
+| `UsagiPKGJ.vpk` | Full installable package |
+| `eboot.bin` | Signed SELF loaded by the Vita |
+| `pkgj.elf` | Unsigned ELF with debug symbols |
+
+## 5. Testing with host tools
+
+`pkgj_cli` uses `src/simulator.cpp` for POSIX replacements of Vita syscalls.
+It is useful for parsing databases and testing extraction/download helpers.
+
+Available subcommands:
+
+```text
+pkgj_cli refreshlist     <MODE> <tsv_file>
+pkgj_cli filedownload    <local_file_or_url>
+pkgj_cli extractzip      <zip_file>
+pkgj_cli refreshcomppack <local_file>
+pkgj_cli extract         <pkg_file> <zrif> <sha256>
+pkgj_cli patchinfo       <xml_file> <titleid>
+```
+
+Example TSV parse:
 
 ```bash
-# With VitaShell FTP running on the Vita at $PSVITAIP:1337
+cd ci/buildhost
+curl -L "https://raw.githubusercontent.com/txy7795679/PSVITA-PKGJ-DATADB/refs/heads/master/PSV_GAMES.tsv" \
+  -o PSV_GAMES.tsv
+./pkgj_cli refreshlist PSVGAMES PSV_GAMES.tsv
+```
+
+`pkgj_sim` is the SDL graphical simulator. It is useful for UI layout work, but
+BGDL, installation, update checks, and Vita-only kernel/plugin behavior are
+stubbed.
+
+## 6. Vita install/debug cycle
+
+Install the VPK with VitaShell, or send just the executable to an already
+installed app during development:
+
+```bash
 curl -T ci/build/eboot.bin ftp://$PSVITAIP:1337/ux0:/app/USAG00001/
 ```
 
-Or use the provided CMake target (builds and sends in one step):
+The CMake `send` target can also send the executable:
+
 ```bash
 cd ci/build
 PSVITAIP=192.168.1.x cmake --build . --target send
 ```
 
-### GitHub Actions
+Runtime folders worth checking while debugging:
 
-`.github/workflows/build.yml` runs on every push: builds `pkgj_cli` and `UsagiPKGJ.vpk` on a native x86_64 Ubuntu runner and uploads both as workflow artifacts (Actions tab → the run → **Artifacts**). `.github/workflows/release.yml` publishes `UsagiPKGJ.vpk` as a GitHub release when a version tag is pushed. Actions is disabled by default on forks — enable it once under the repo's Actions tab before pushing.
+| Path | Purpose |
+| --- | --- |
+| `ux0:usagi-pkgj/config.txt` | User config |
+| `ux0:usagi-pkgj/cover` | Cover cache |
+| `ux0:usagi-pkgj/<contentid>` | Direct download/extract work folders |
+| `ux0:bgdl/t/` | LiveArea/BGDL queued downloads |
 
----
+## 7. CI and releases
 
-## 6. File change summary
+`.github/workflows/build.yml` is the regular push build. It builds:
 
-Non-exhaustive list of what differs from [blastrock/pkgj](https://github.com/blastrock/pkgj):
+- `pkgj_cli`
+- `UsagiPKGJ.vpk`
+
+`.github/workflows/release.yml` is the canonical release workflow. Push a tag
+like `0.72` and it will:
+
+- build `UsagiPKGJ.vpk`
+- build `pkgj_cli`
+- build `pkgj_sim`
+- publish a GitHub Release with versioned asset names
+
+Tags containing `alpha`, `beta`, or `rc` are marked as pre-releases.
+
+Version values live in `CMakeLists.txt`:
+
+- `VITA_VERSION`
+- `PKGI_DISPLAY_VERSION`
+
+Update both before tagging a release.
+
+## 8. File change summary
+
+Non-exhaustive fork-specific areas:
 
 | Area | Files | Description |
-|------|-------|-------------|
-| Grid view | `src/gridview.{hpp,cpp}` (new) | Cover-art grid rendering, input, and per-visible-cell download/decode coordination (`GridImageCache`) for `ModeGames`/`ModePspGames`/`ModePsxGames`, default-on |
-| Cover texture pool | `src/gridtexturepool.{hpp,cpp}` (new) | Fixed pool of 24 persistent, never-individually-freed texture slots the grid blits decoded covers into — see "Cover texture pool" above |
-| Cover fetching | `src/imagefetcher.{hpp,cpp}` | Reworked to try an ordered list of sources per title (HexFlow PNG → PS Store JPEG fallback) instead of a single URL, mode-aware HexFlow folder (PSVita/PSP/PS1); PNG decode goes through `vita2d_load_PNG_buffer`. `take_decoded_cover()` decodes to a plain pixel buffer for the texture pool; `get_texture()` (GameView only) is unchanged |
-| Cover/flag assets | `assets/covers/*.png`, `assets/flags/*.png` | Grid/GameView placeholder art per content type (Vita/PSP vertical, PSX square) and region flag badges, embedded like other bundled UI assets |
-| Config | `src/config.{hpp,cpp}` | Added `grid_view` |
-| Menu | `src/menu.{hpp,cpp}` | Added "Grid view (games)" toggle |
-| Main loop | `src/pkgi.{hpp,cpp}` | Dispatches to the grid or list renderer based on `config.grid_view`; alphabetical name-group-jump helpers and the OK/cancel button-label helpers moved out of the file's anonymous namespace so other translation units can call them |
-| GameView | `src/gameview.{hpp,cpp}` | Removed the PS Store description panel and the View→Panel→SubItem focus hierarchy (the left cover column has nothing interactive left to "enter"); opening the view now focuses "Install Game" directly |
-| Removed | `src/annotationdb.{hpp,cpp}`, `src/screenshotfetcher.{hpp,cpp}`, `src/descriptionfetcher.{hpp,cpp}` | Personal flags/comments, GameView screenshot strip, and PS Store description — all dropped |
+| --- | --- | --- |
+| Branding/version | `CMakeLists.txt`, `assets/sce_sys/**`, `src/update.cpp`, `src/vita.cpp` | Usagi name/title ID/VPK/data-folder/release API |
+| Browse home | `src/browserview.{hpp,cpp}` | Grouped Home sections and labels |
+| Grid view | `src/gridview.{hpp,cpp}` | Cover grid for PS Vita/PSP/PS1, input, footer hints, throttling |
+| Texture pool | `src/gridtexturepool.{hpp,cpp}` | Persistent cover texture slots for Vita3K stability |
+| Cover fetching | `src/imagefetcher.{hpp,cpp}`, `src/workerpool.hpp`, `src/curlhttp.cpp` | Mode-aware cover sources, cache, worker/curl limits |
+| Cover/flag assets | `assets/covers/*.png`, `assets/flags/*.png` | Placeholder art and region badges |
+| Details page | `src/gameview.{hpp,cpp}` | Direct action footer, PSP LiveArea PBP action, cover panel |
+| Download flow | `src/pkgi.cpp`, `src/downloader.cpp`, `src/download.cpp` | LiveArea queue feedback and cancellable direct PSP downloads |
+| Removed fork extras | `src/annotationdb.*`, `src/screenshotfetcher.*`, `src/descriptionfetcher.*` | Personal annotations, screenshots, and PS Store description panel were dropped |

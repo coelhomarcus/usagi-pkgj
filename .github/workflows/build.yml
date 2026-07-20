@@ -1,65 +1,41 @@
-name: build
-run-name: Build
+name: Build
+
 on: [push]
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - name: Install apt dependencies
-        run: sudo apt-get install -y ninja-build g++-12 python3-poetry
-      - uses: actions/setup-python@v4
+        run: sudo apt-get update && sudo apt-get install -y ninja-build g++-12
+
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-          cache: 'poetry'
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: pip install 'poetry<2.0'
+
       - name: Cache Conan packages
         id: cache-conan
-        if: ${{ github.event.ref == 'refs/heads/master' }}
         uses: actions/cache@v4
         with:
           path: ~/.conan2/p
-          key: ${{ runner.os }}-conan
+          key: conan-build-${{ runner.os }}-${{ hashFiles('ci/conan-vitasdk/conanfile.py', 'ci/conan-fmt/conanfile.py', 'ci/conan-libzip/conanfile.py', 'ci/conan-vitasqlite/conanfile.py', 'conanfile.py') }}
+          restore-keys: conan-build-${{ runner.os }}-
+
       - run: ci/ci.sh
+
       - name: Upload linux build
         uses: actions/upload-artifact@v4
         with:
           name: pkgj_cli
           path: ci/buildhost/pkgj_cli
+
       - name: Upload vita build
         uses: actions/upload-artifact@v4
         with:
           name: UsagiPKGJ.vpk
           path: ci/build/UsagiPKGJ.vpk
-  publish:
-    needs: build
-    if: ${{ startsWith(github.event.ref, 'refs/tags/v') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: last
-      - name: Remove previous version
-        run: |
-          rm *.vpk
-          refname=${{ github.ref_name }}
-          echo -n ${refname:1} > version
-      - uses: actions/download-artifact@v4
-        with:
-          name: UsagiPKGJ.vpk
-      - uses: svenstaro/upload-release-action@v2
-        with:
-          file: UsagiPKGJ.vpk
-          release_name: "Usagi PKGj ${{ github.ref_name }}"
-          prerelease: ${{ contains(github.ref_name, 'beta') }}
-      - name: Prepare new version
-        run: |
-          git config --global user.name "GitHub actions"
-          git config --global user.email "actions@github.com"
-
-          mv UsagiPKGJ.vpk UsagiPKGJ-${{ github.ref_name }}.vpk
-          git add -u
-          git add UsagiPKGJ-${{ github.ref_name }}.vpk
-          git commit -m "Push ${{ github.ref_name }}"
-      - name: Upload new version
-        if: ${{ !contains(github.ref_name, 'beta') }}
-        run: git push origin last

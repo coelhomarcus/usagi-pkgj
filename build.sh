@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# build.sh — convenience build script for pkgj fork
+# build.sh — convenience build script for Usagi PKGj
 #
 # Usage:
 #   ./build.sh [target] [--clean] [--fake-version VERSION]
 #
 # Targets:
-#   host          Build host simulator   (output: ci/buildhost/pkgj_cli)
-#   vita          Build PS Vita release   (output: ci/build/pkgj.vpk)       [default]
+#   host          Build host tools        (output: ci/buildhost/pkgj_cli, pkgj_sim)
+#   vita          Build PS Vita release   (output: ci/build/UsagiPKGJ.vpk)       [default]
 #   vita-release  Same as vita
-#   vita-test     Build PS Vita test      (output: ci/buildtest/pkgj.vpk)
-#                   Title ID : PKGJ00099
-#                   App name : "PKGj+ TEST"
+#   vita-test     Build PS Vita test      (output: ci/buildtest/UsagiPKGJ-Test.vpk)
+#                   Title ID : USAG00099
+#                   App name : "Usagi PKGj TEST"
 #                   (Safe to install alongside the release build on the same Vita)
 #
 # Options:
 #   --clean              Remove the build directory before building (full rebuild)
 #   --fake-version VER   Override PKGI_VERSION with VER so the running app thinks it
 #                        is an older version and triggers the auto-update check.
-#                        Example: ./build.sh vita --fake-version 0.59
-#                        (install that VPK on the Vita, open PKGj+ → it should offer
+#                        Example: ./build.sh vita --fake-version 0.71
+#                        (install that VPK on the Vita, open Usagi PKGj → it should offer
 #                         to download the real latest release from GitHub)
 
 set -euo pipefail
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
             shift
             FAKE_VERSION="${1:-}"
             if [[ -z "$FAKE_VERSION" ]]; then
-                echo "--fake-version requires a version argument (e.g. 0.59)"
+                echo "--fake-version requires a version argument (e.g. 0.71)"
                 exit 1
             fi
             ;;
@@ -72,6 +72,9 @@ export PATH="$VITASDK/bin:$PATH"
 # ── Must run conan from inside ci/ so Poetry finds pyproject.toml ──
 cd "$SCRIPT_DIR/ci"
 
+echo "==> Preparing Conan profiles and local package recipes"
+./setup_conan.sh
+
 # ── Helper: clean build dir ──
 maybe_clean() {
     local dir="$1"
@@ -100,8 +103,11 @@ case "$TARGET" in
             --output-folder .
 
         cmake ../.. \
+            -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DBUILD_SIM=ON
+            -DHOST_BUILD=ON \
+            -DBUILD_SIM=ON \
+            -DCMAKE_TOOLCHAIN_FILE=./conan_toolchain.cmake
 
         ninja pkgj_cli pkgj_sim
 
@@ -111,7 +117,7 @@ case "$TARGET" in
 
     # ------------------------------------------------------------------
     vita)
-        echo "==> Building Vita release  (PKGJ00001 / PKGj+)"
+        echo "==> Building Vita release  (USAG00001 / Usagi PKGj)"
         maybe_clean build
         cd build
 
@@ -146,13 +152,13 @@ case "$TARGET" in
         [[ -f pkgj ]] && cp pkgj pkgj.elf
 
         echo ""
-        echo "==> Done.  Package: ci/build/pkgj.vpk"
+        echo "==> Done.  Package: ci/build/UsagiPKGJ.vpk"
         [[ -n "$FAKE_VERSION" ]] && echo "    Built with fake version \"${FAKE_VERSION}\" — auto-update test build."
         ;;
 
     # ------------------------------------------------------------------
     vita-test)
-        echo "==> Building Vita TEST  (PKGJ00099 / PKGj+ TEST)"
+        echo "==> Building Vita TEST  (USAG00099 / Usagi PKGj TEST)"
         maybe_clean buildtest
         cd buildtest
 
@@ -173,15 +179,16 @@ case "$TARGET" in
         [[ -f conanbuildenv-relwithdebinfo-armv7.sh ]] && \
             source conanbuildenv-relwithdebinfo-armv7.sh
 
-        # Step 2: cmake configure — override Title ID and App Name for the test build
+        # Step 2: cmake configure — override Title ID, App Name, and VPK name for the test build
         #         VITA_TITLEID and VITA_APP_NAME are CACHE variables in CMakeLists.txt
         #         so -D flags here take precedence over the defaults.
         cmake ../.. \
             -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DVITA_TITLEID="PKGJ00099" \
-            -DVITA_APP_NAME="PKGj+ TEST" \
+            -DVITA_TITLEID="USAG00099" \
+            -DVITA_APP_NAME="Usagi PKGj TEST" \
+            -DVITA_VPK_NAME="UsagiPKGJ-Test" \
             ${VERSION_OVERRIDE:-}
 
         # Step 3: cmake build
@@ -190,8 +197,8 @@ case "$TARGET" in
         [[ -f pkgj ]] && cp pkgj pkgj.elf
 
         echo ""
-        echo "==> Done.  Package: ci/buildtest/pkgj.vpk"
-        echo "    Title ID PKGJ00099 — safe to install alongside the release build."
+        echo "==> Done.  Package: ci/buildtest/UsagiPKGJ-Test.vpk"
+        echo "    Title ID USAG00099 — safe to install alongside the release build."
         [[ -n "$FAKE_VERSION" ]] && echo "    Built with fake version \"${FAKE_VERSION}\" — auto-update test build."
         ;;
 esac
