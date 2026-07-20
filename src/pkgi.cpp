@@ -39,9 +39,11 @@ extern SDL_Texture* sim_create_font_texture(const uint32_t* px, int w, int h);
 
 #include <fmt/format.h>
 
+#include <deque>
 #include <memory>
 #include <set>
 #include <cctype>
+#include <utility>
 #include <vector>
 
 #ifndef PKGI_SIMULATOR
@@ -100,6 +102,17 @@ bool need_refresh = true;
 bool runtime_install_queued = false;
 std::string content_to_refresh;
 void pkgi_reload();
+
+struct PendingLiveAreaInstall
+{
+    int type;
+    std::string title;
+    std::string url;
+    std::vector<uint8_t> rif;
+};
+
+std::deque<PendingLiveAreaInstall> pending_livearea_installs;
+int pending_livearea_delay_frames = 0;
 
 bool pkgi_overlay_is_open()
 {
@@ -1497,6 +1510,81 @@ void pkgi_create_psp_rif([[maybe_unused]] std::string contentid,
 #endif // PKGI_SIMULATOR
 }
 
+void pkgi_queue_livearea_install(
+        int type,
+        const std::string& title,
+        const std::string& url,
+        std::vector<uint8_t> rif)
+{
+    pending_livearea_installs.push_back(
+            PendingLiveAreaInstall{type, title, url, std::move(rif)});
+    if (pending_livearea_delay_frames < 2)
+        pending_livearea_delay_frames = 2;
+
+    if (pending_livearea_installs.size() == 1)
+    {
+        pkgi_dialog_message(
+                fmt::format("Queueing {} in LiveArea...", title).c_str(), 0);
+    }
+    else
+    {
+        pkgi_dialog_message(
+                fmt::format(
+                        "Queueing {} items in LiveArea...",
+                        pending_livearea_installs.size())
+                        .c_str(),
+                0);
+    }
+}
+
+void pkgi_process_pending_livearea_installs()
+{
+    if (pending_livearea_installs.empty())
+        return;
+
+    if (pending_livearea_delay_frames > 0)
+    {
+        --pending_livearea_delay_frames;
+        return;
+    }
+
+    const size_t count = pending_livearea_installs.size();
+    const std::string first_title = pending_livearea_installs.front().title;
+
+    while (!pending_livearea_installs.empty())
+    {
+        auto install = std::move(pending_livearea_installs.front());
+        pending_livearea_installs.pop_front();
+
+        try
+        {
+            pkgi_start_bgdl(
+                    install.type, install.title, install.url, install.rif);
+        }
+        catch (const std::exception& e)
+        {
+            pending_livearea_installs.clear();
+            pkgi_dialog_error(
+                    fmt::format(
+                            "Failed to queue {} in LiveArea: {}",
+                            install.title,
+                            e.what())
+                            .c_str());
+            return;
+        }
+    }
+
+    pkgi_dialog_message(
+            (count == 1
+                            ? fmt::format(
+                                      "Installation of {} queued in LiveArea",
+                                      first_title)
+                            : fmt::format(
+                                      "{} installations queued in LiveArea",
+                                      count))
+                    .c_str());
+}
+
 
 void pkgi_download_psm_runtime_if_needed() {
     if(!pkgi_is_installed("PCSI00011") && !runtime_install_queued) {
@@ -1505,7 +1593,7 @@ void pkgi_download_psm_runtime_if_needed() {
         char message[256];
         pkgi_zrif_decode(PSM_RUNTIME_DRMFREE_LICENSE, rif, message, sizeof(message));
         
-        pkgi_start_bgdl(
+        pkgi_queue_livearea_install(
             BgdlTypeGame,
             "PlayStation Mobile Runtime Package",
             "http://ares.dl.playstation.net/psm-runtime/IP9100-PCSI00011_00-PSMRUNTIME000000.pkg",
@@ -1569,16 +1657,11 @@ void pkgi_start_download(
             {
 #endif
                 
-                pkgi_start_bgdl(
+                pkgi_queue_livearea_install(
                         mode_to_bgdl_type(mode),
                         item.name,
                         item.url,
                         std::vector<uint8_t>(rif, rif + PKGI_PSM_RIF_SIZE));
-                pkgi_dialog_message(
-                        fmt::format(
-                                "Installation of {} queued in LiveArea",
-                                item.name)
-                                .c_str());
             }
             else {
                 downloader.add(DownloadItem{
@@ -2067,6 +2150,7 @@ int main()
             }
 
             pkgi_swap();
+            pkgi_process_pending_livearea_installs();
         }
     }
     catch (const std::exception& e)
