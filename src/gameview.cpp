@@ -2,6 +2,8 @@
 
 #include <fmt/format.h>
 
+#include <stdexcept>
+
 #include "coverplaceholder.hpp"
 #include "dialog.hpp"
 #include "file.hpp"
@@ -80,6 +82,61 @@ std::string friendly_size(int64_t size)
     if (size < 1000LL * 1000 * 1000)
         return fmt::format("{:.1f} MB", static_cast<double>(size) / 1000.0 / 1000.0);
     return fmt::format("{:.2f} GB", static_cast<double>(size) / 1000.0 / 1000.0 / 1000.0);
+}
+
+Type download_type_for_mode(Mode mode)
+{
+    switch (mode)
+    {
+    case ModeGames:
+        return Game;
+    case ModeDlcs:
+        return Dlc;
+    case ModePsmGames:
+        return PsmGame;
+    case ModePsxGames:
+        return PsxGame;
+    case ModePspGames:
+        return PspGame;
+    case ModePspDlcs:
+        return PspDlc;
+    case ModeDemos:
+    case ModeThemes:
+        throw formatEx<std::runtime_error>(
+                "unsupported mode {}", static_cast<int>(mode));
+    }
+    throw formatEx<std::runtime_error>(
+            "unknown mode {}", static_cast<int>(mode));
+}
+
+const char* install_action_label(Mode mode)
+{
+    switch (mode)
+    {
+    case ModePspGames:
+        return "Install ISO";
+    case ModePspDlcs:
+        return "Install DLC";
+    case ModePsxGames:
+        return "Install";
+    default:
+        return "Install";
+    }
+}
+
+const char* cancel_action_label(Mode mode)
+{
+    switch (mode)
+    {
+    case ModePspGames:
+        return "Cancel ISO";
+    case ModePspDlcs:
+        return "Cancel DLC";
+    case ModePsxGames:
+        return "Cancel";
+    default:
+        return "Cancel";
+    }
 }
 
 ImVec4 pkgi_color_to_imgui(uint32_t color)
@@ -413,9 +470,12 @@ void GameView::render()
 
     // ── Hint bar ─────────────────────────────────────────────────────────────
     ImGui::Spacing();
+    const bool package_queued =
+            _downloader->is_in_queue(download_type_for_mode(_mode), _item->content);
     draw_button_hint(
             pkgi_ok_button(),
-            is_vita_mode() ? "Install" : "Install ISO",
+            package_queued ? cancel_action_label(_mode)
+                           : install_action_label(_mode),
             true);
 
     if (is_vita_mode())
@@ -458,8 +518,11 @@ void GameView::update(const pkgi_input& input)
 {
     if (input.pressed & pkgi_ok_button())
     {
-        start_download_package(
-                is_vita_mode() ? PspInstallMode::Auto : PspInstallMode::Iso);
+        if (_downloader->is_in_queue(download_type_for_mode(_mode), _item->content))
+            cancel_download_package();
+        else
+            start_download_package(
+                    is_vita_mode() ? PspInstallMode::Auto : PspInstallMode::Iso);
         return;
     }
 
@@ -636,7 +699,7 @@ void GameView::start_download_package(PspInstallMode psp_install_mode)
 
 void GameView::cancel_download_package()
 {
-    _downloader->remove_from_queue(Game, _item->content);
+    _downloader->remove_from_queue(download_type_for_mode(_mode), _item->content);
     _item->presence = PresenceUnknown;
 }
 

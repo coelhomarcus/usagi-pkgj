@@ -65,7 +65,7 @@ private:
     std::deque<DownloadItem> _queue;
 
     DownloadItem _current_download;
-    bool _cancel_current = false;
+    std::atomic_bool _cancel_current = false;
     std::atomic<uint64_t> _download_offset = 0;
     std::atomic<uint64_t> _download_size = 0;
 
