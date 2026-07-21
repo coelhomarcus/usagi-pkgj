@@ -153,7 +153,9 @@ case "$TARGET" in
 
         echo ""
         echo "==> Done.  Package: ci/build/UsagiPKGJ.vpk"
-        [[ -n "$FAKE_VERSION" ]] && echo "    Built with fake version \"${FAKE_VERSION}\" — auto-update test build."
+        if [[ -n "$FAKE_VERSION" ]]; then
+            echo "    Built with fake version \"${FAKE_VERSION}\" — auto-update test build."
+        fi
         ;;
 
     # ------------------------------------------------------------------
@@ -199,6 +201,8 @@ case "$TARGET" in
         echo ""
         echo "==> Done.  Package: ci/buildtest/UsagiPKGJ-Test.vpk"
         echo "    Title ID USAG00099 — safe to install alongside the release build."
-        [[ -n "$FAKE_VERSION" ]] && echo "    Built with fake version \"${FAKE_VERSION}\" — auto-update test build."
+        if [[ -n "$FAKE_VERSION" ]]; then
+            echo "    Built with fake version \"${FAKE_VERSION}\" — auto-update test build."
+        fi
         ;;
 esac
