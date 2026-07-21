@@ -112,6 +112,10 @@ private:
 
 #else // PKGI_SIMULATOR — original Vita implementation below
 
+// Frees the calling thread's newlib _reent — what libpthread calls on
+// thread exit. Internal vitasdk symbol (no public header). See entry_point.
+extern "C" int vitasdk_delete_thread_reent(SceUID thid);
+
 class ScopeProcessLock
 {
 public:
@@ -344,6 +348,13 @@ private:
         {
             LOG_ERR("Thread terminated with unknown exception");
         }
+
+        // Free this raw thread's lazily-created newlib _reent before it ends;
+        // a pthread does this on exit, a raw sceKernel thread does not. Leaking
+        // it exhausts the fixed 256-slot _reent table under heavy thread churn
+        // (one worker per cover download), after which a libc call gets a null
+        // _reent and faults. Must run after all libc use above; no-op if none.
+        vitasdk_delete_thread_reent(0);
         return 0;
     }
 };
