@@ -16,8 +16,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(VITA_APP_NAME "Usagi PKGj" CACHE STRING "Vita application display name")
 set(VITA_TITLEID  "USAG00001" CACHE STRING "Vita Title ID (4 letters + 5 digits)")
 set(VITA_VPK_NAME "UsagiPKGJ" CACHE STRING "Vita .vpk output filename (without extension)")
-set(VITA_VERSION  "0.72" CACHE STRING "Vita application version (X.XX format for param.sfo)")
-set(PKGI_DISPLAY_VERSION "0.72" CACHE STRING "Version string shown in the app header")
+set(VITA_VERSION  "0.73" CACHE STRING "Vita application version (X.XX format for param.sfo)")
+set(PKGI_DISPLAY_VERSION "0.73" CACHE STRING "Version string shown in the app header")
 
 option(PKGI_ENABLE_LOGGING "enables debug logging over udp multicast" OFF)
 

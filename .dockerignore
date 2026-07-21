@@ -1,0 +1,7 @@
+.git
+/build*
+/ci/build*
+/ci/conan-*/test_package*/build
+.vscode
+*.tags
+.DS_Store

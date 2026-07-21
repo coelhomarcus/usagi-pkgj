@@ -140,13 +140,38 @@ in-app progress bar. PSP direct downloads now expose cancellation.
 
 ## 4. Local builds
 
-The convenience script is the shortest path:
+### Docker (recommended)
+
+The `Dockerfile` at the repo root packages the whole toolchain — g++-12,
+ninja, cmake, Python 3.11/Poetry, and the SDL2/curl dev headers `host`
+needs — so there is nothing to install locally beyond Docker itself.
 
 ```bash
-./build.sh host
-./build.sh vita
-./build.sh vita-test
+docker build -t usagi-pkgj-build .
+
+# Vita release VPK -> ci/build/UsagiPKGJ.vpk
+docker run --rm -v "$PWD":/work -v usagi-pkgj-conan:/root/.conan2 \
+  usagi-pkgj-build bash ./build.sh vita
+
+# Host CLI/simulator -> ci/buildhost/pkgj_cli, pkgj_sim
+docker run --rm -v "$PWD":/work -v usagi-pkgj-conan:/root/.conan2 \
+  usagi-pkgj-build bash ./build.sh host
 ```
+
+Notes:
+
+- The image is `linux/amd64` on purpose: the VitaSDK toolchain
+  (`ci/conan-vitasdk`) is a prebuilt x86_64 Linux release, so it must run
+  under emulation (Rosetta/QEMU) on Apple Silicon. Docker Desktop handles this
+  automatically; expect the first build of each target to be noticeably
+  slower than a native Linux x86_64 run.
+- The named volume `usagi-pkgj-conan` caches `~/.conan2` (the downloaded
+  VitaSDK toolchain plus every built dependency) across container runs, so
+  only the first build per target pays the full Conan cost.
+- The repo is bind-mounted at `/work`, so edits on the host are picked up
+  immediately — no image rebuild needed unless `Dockerfile` itself changes.
+- `--clean` and `--fake-version` work the same as in the native flow, e.g.
+  `usagi-pkgj-build bash ./build.sh vita --clean`.
 
 Targets:
 
@@ -155,6 +180,18 @@ Targets:
 | `host` | `ci/buildhost/pkgj_cli`, `ci/buildhost/pkgj_sim` | CLI and SDL simulator |
 | `vita` | `ci/build/UsagiPKGJ.vpk` | Release title ID `USAG00001` |
 | `vita-test` | `ci/buildtest/UsagiPKGJ-Test.vpk` | Side-by-side test title ID `USAG00099` |
+
+### Native build (Linux x86_64 only, without Docker)
+
+Only viable directly on a compatible x86_64 Linux machine — on macOS/Apple
+Silicon, use the Docker flow above or GitHub Actions instead. The convenience
+script is the shortest path:
+
+```bash
+./build.sh host
+./build.sh vita
+./build.sh vita-test
+```
 
 Useful options:
 
@@ -166,7 +203,7 @@ Useful options:
 `--fake-version` overrides both the runtime version string and Vita
 `APP_VER`, which is useful for update-flow testing.
 
-### Manual host build
+#### Manual host build
 
 ```bash
 cd ci
@@ -192,11 +229,7 @@ cmake ../.. \
 ninja pkgj_cli pkgj_sim
 ```
 
-### Manual Vita build
-
-Local Vita builds require VitaSDK in a compatible x86_64 Linux environment.
-On macOS/Apple Silicon, using GitHub Actions or a Docker/x86_64 Linux setup is
-usually easier than installing the toolchain directly.
+#### Manual Vita build
 
 ```bash
 cd ci
