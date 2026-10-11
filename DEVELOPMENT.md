@@ -63,8 +63,8 @@ Other modes keep the classic text list. The menu option is still named
 `ImageFetcher` (`src/imagefetcher.{hpp,cpp}`) builds an ordered source list per
 title:
 
-1. HexFlow-Covers PNG art, using this fork's mirror:
-   `https://raw.githubusercontent.com/coelhomarcus/HexFlow-Covers/main/Covers/...`
+1. HexFlow-Covers PNG art from the upstream repository:
+   `https://raw.githubusercontent.com/Andiweli/HexFlow-Covers/main/Covers/...`
 2. PlayStation Store JPEG cover as a fallback.
 
 The HexFlow folder is mode-aware:
